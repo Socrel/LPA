@@ -128,21 +128,25 @@ def issue_token():
     tokens[token] = username
     return jsonify({'access_token': token, 'token_type': 'Bearer'})
 
+@app.route("/")
+def index():
+    return "<h1>Hello</h1>"
+
 def inserta_encolado(body):
     for document in body['Documents']:
             insert_statement_inic = "Insert into TB_DOCUMENTOS_ENCOLADOS (user_onbase, client_number, type_id,identification,type_person,code_country,client_name,code_industry,id_doc,periodo,on_demand,fecha_creacion) "\
             f"values('{body['User']}','{document['ClientNumber']}','{document['TypeId']}','{document['Identification']}','{document['TypePerson']}','{document['CodeCountry']}','{document['Name']}','{document['CodeIndustry']}',{document['IdDoc']},{document['Periodo']},{body['OnDemand']},'{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}')"
     
     print(insert_statement_inic)
-    sql_connector.insert_data(insert_statement_inic)
+    #sql_connector.insert_data(insert_statement_inic)
     return insert_statement_inic
     ##sql_connector.insert_data(insert_statement_inic)
 
 
 if __name__ == '__main__':
-    sql_connector = SQLConnector(server, database, user, password)
-    sql_connector.connect()
-    app.run(debug=True,ssl_context='adhoc')
+    #sql_connector = SQLConnector(server, database, user, password)
+    #sql_connector.connect()
+    app.run(debug=True,ssl_context='adhoc',host='0.0.0.0')
     """
     server_port = os.environ.get('PORT', '5000')
     app.run(debug=False, port=server_port, host='0.0.0.0')"""
