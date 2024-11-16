@@ -36,14 +36,17 @@ def job():
             print(insert_statement_inic)
             sql_connector.insert_data(insert_statement_inic)
             select_id_documento = 'Select isnull(max(id_documento),0) as id_documento from TL_BALANCE'
-            consulta_max_id=sql_connector.read_data(select_id_documento)
-            for row in consulta_max_id:
-                id_doc = row.id_documento +1
-                localragv3.run(id_ejecucion,id_doc,sql_connector)
-                insert_statement_fin = "Update TH_EJECUCION "\
-                    f"Set fecha_fin='{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}',estado= 0"\
-                    f"where id_ejecucion={id_ejecucion}"
-                sql_connector.insert_data(insert_statement_fin)
+            
+            consulta_max_id_doc=sql_connector.read_data(select_id_documento)
+            
+            for row in consulta_max_id_doc:
+                
+                    id_doc = row.id_documento +1
+                    localragv3.run(id_ejecucion,id_doc,sql_connector)
+                    insert_statement_fin = "Update TH_EJECUCION "\
+                        f"Set fecha_fin='{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}',estado= 0"\
+                        f"where id_ejecucion={id_ejecucion}"
+                    sql_connector.insert_data(insert_statement_fin)
                 
         else:
             print ("Hay otro proceso en ejecución")
@@ -65,7 +68,7 @@ def job():
     #p.wait()
     sql_connector.close()
     
-schedule.every().day.at("15:45","America/Bogota").do(job)
+schedule.every().day.at("19:03","America/Bogota").do(job)
 
 while True:
     now = datetime.now()

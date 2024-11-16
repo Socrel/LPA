@@ -83,14 +83,14 @@ diccionario_cuentas_2 = [
     ("Pagos anticipados", "Activo Corriente", "Otros Activos Ctes","Activo Corriente"),
     ("Adelantos a proveedores", "Activo Corriente", "Otros Activos Ctes","Activo Corriente"),
     ("Efectivo", "Activo Corriente", "Disponibilidades","Activo Corriente"),
-    ("Prestamos por Cobrar, Parte Relacionadas", "Activo No Corriente", "Otros Activos Ctes","Activo No Corriente"),
-    ("Prestamos por Cobrar, parte relacionadas prop...", "Activo No Corriente", "Otros Activos Ctes","Activo No Corriente"),
-    ("Propiedad, maquinaria, mobiliario, equipo y mejoras, neto", "Activo No Corriente", "Otros Activos Ctes","Activo No Corriente"),
-    ("Capital Adicional Pagado", "Activo No Corriente", "Capital y Ajuste","Activo No Corriente"),
-    ("Activos bajo contratos de arrendamiento financiero","Activo No Corriente", "Otros Activos Ctes","Activo No Corriente"),
+    ("Prestamos por Cobrar, Parte Relacionadas", "Activo No Corriente", "Otros Activos No Ctes","Activo No Corriente"),
+    ("Prestamos por Cobrar, parte relacionadas prop...", "Activo No Corriente", "Otros Activos No Ctes","Activo No Corriente"),
+    ("Propiedad, maquinaria, mobiliario, equipo y mejoras, neto", "Activo No Corriente", "Otros Activos No Ctes","Activo No Corriente"),
+    ("Capital Adicional Pagado", "Activo No Corriente", "Otros Activos No Ctes","Activo No Corriente"),
+    ("Activos bajo contratos de arrendamiento financiero","Activo No Corriente", "Otros Activos No Ctes","Activo No Corriente"),
     ("Acciones de Capital", "Patrimonio", "Capital y Ajuste","Patrimonio"),
-    ("Capital Adicional Pagado", "Patrimonio", "Otros Activos Ctes","Patrimonio"),
-    ("Ganancias Retenidas", "Patrimonio", "Otros Activos Ctes","Patrimonio"),
+    ("Capital Adicional Pagado", "Patrimonio", "Otros","Patrimonio"),
+    ("Ganancias Retenidas", "Patrimonio", "Resultados No Asignados","Patrimonio"),
     # Añade todas las cuentas que necesites
 ]
 
@@ -100,6 +100,7 @@ diccionario_var_pasivo_corriente={}
 diccionario_var_activo_no_corriente={}
 diccionario_var_pasivo_no_corriente={}
 diccionario_var_patrimonio={}
+diccionario_var_estado_resultados={}
 
 
 # Function to get relevant context from the vault based on user input
@@ -177,9 +178,6 @@ def obtener_reclasificacion(cuenta, categoria, diccionario_cuentas, umbral_simil
         cat_dic_emb = torch.tensor(ollama.embeddings(model='mxbai-embed-large', prompt=cat_diccionario)["embedding"])
         
         # Calcula la similitud de coseno para cuenta y categoría
-        print (cuenta_emb)
-        print ('------------------------')
-        print (cuenta_dic_emb)
         similitud_cuenta = F.cosine_similarity(cuenta_emb, cuenta_dic_emb, dim=0)
         similitud_categoria = F.cosine_similarity(categoria_emb, cat_dic_emb, dim=0)
         
@@ -213,22 +211,26 @@ def run(id_lote,id_doc,sql_connector):
     select_statement = "Select cuenta,categoria,cuenta_reclasificada,categoria_reclasificada from TB_DICCIONARIO_CUENTAS;"
     result = sql_connector.read_data(select_statement)
     for row in result:
-        diccionario_cuentas.append(row)
-
+        diccionario_cuentas.append((str(row[0]),str(row[1]),str(row[2]),str(row[3])))
     #Llenado de duplas cuenta - var
-    select_variables ="Select variable,categoria,cuenta from TL_LPA_MODELO"
-    for registro in select_variables:
-        if registro.categoria == 'activo corriente':
-            diccionario_var_activo_corriente[registro.cuenta] = registro.variable
-        elif registro.categoria == 'activo no corriente':
-            diccionario_var_activo_no_corriente[registro.cuenta] = registro.variable
-        elif registro.categoria == 'pasivo corriente':
-            diccionario_var_pasivo_corriente[registro.cuenta] = registro.variable
-        elif registro.categoria == 'pasivo no corriente':
-            diccionario_var_pasivo_no_corriente[registro.cuenta] = registro.variable
+    select_variables ="Select variable,categoria,cuenta,id_modelo from TL_LPA_MODELO"
+    result_varianles = sql_connector.read_data(select_variables)
+    for registro in result_varianles:
+        if registro[1] == 'activo corriente':
+            diccionario_var_activo_corriente[registro[2]] = registro[0]
+        elif registro[1] == 'activo no corriente':
+            diccionario_var_activo_no_corriente[registro[2]] = registro[0]
+        elif registro[1] == 'pasivo corriente':
+            diccionario_var_pasivo_corriente[registro[2]] = registro[0]
+        elif registro[1] == 'pasivo no corriente':
+            diccionario_var_pasivo_no_corriente[registro[2]] = registro[0]
+        elif registro[1] == 'patrimonio':
+            diccionario_var_patrimonio[registro[2]] = registro[0]
         else:
-            diccionario_var_patrimonio[registro.cuenta] = registro.variable
+            diccionario_var_estado_resultados[registro[2]] = registro[0]
 
+    for key, value in diccionario_var_activo_no_corriente.items() :
+        print (key, value)
     # Iterar sobre los archivos PDF en la carpeta
     for pdf_IVA_index,archivo_pdf in enumerate(archivos_en_carpeta):
         if archivo_pdf.endswith(".PDF") or archivo_pdf.endswith(".pdf"):
@@ -399,7 +401,7 @@ def run(id_lote,id_doc,sql_connector):
             Responder en español.
             No respondas con texto como Here is the JSON response ni comillas ```        
             Siempre responde en formato JSON con los siguientes campos: 
-            {'categoria': '...','cuenta': '...', 'valor': '...','fecha': 'dd-mm-yyyy'}.
+            {'categoria': '...','cuenta': '...', 'valor': '...','fecha': 'yyyy-mm-dd'}.
 
             un mismo documento puede tener varios periodos, asegurese de que el valor corresponde al periodo indicado en el documento.
             Instrucciones específicas:
@@ -417,7 +419,7 @@ def run(id_lote,id_doc,sql_connector):
                 - "categoria": Categoría a la que pertenece (según las especificaciones anteriores).
                 - "cuenta": Nombre de la cuenta extraída.
                 - "valor": Valor numérico extraído correspondiente al mismo periodo financiero, pude haber un valor para cada periodo.
-                - "fecha": Fecha del periodo financiero en formato "dd-mm-yyyy".
+                - "fecha": Fecha del periodo financiero en formato "yyyy-mm-dd".
             5. No incluyas totales como "Total Activo", "Total Pasivo", o "Total Patrimonio".
             6. Responde únicamente en formato JSON estructurado, sin texto adicional.
 
@@ -429,14 +431,14 @@ def run(id_lote,id_doc,sql_connector):
 
             {
             "estado_de_situacion_financiera": [
-                {"categoria": "Activo Corriente", "cuenta": "Caja y Bancos", "valor": "50000", "fecha": "31-12-2023"},
-                {"categoria": "Activo No Corriente", "cuenta": "Inversiones", "valor": "200000", "fecha": "31-12-2023"},
-                {"categoria": "Pasivo Corriente", "cuenta": "Cuentas por Pagar", "valor": "15000", "fecha": "31-12-2023"}
-                {"categoria": "Pasivo No Corriente", "cuenta": "Otras Cuentas por Pagar", "valor": "15000", "fecha": "31-12-2023"}
+                {"categoria": "Activo Corriente", "cuenta": "Caja y Bancos", "valor": "50000", "fecha": "2023-12-31"},
+                {"categoria": "Activo No Corriente", "cuenta": "Inversiones", "valor": "200000", "fecha": "2023-12-31"},
+                {"categoria": "Pasivo Corriente", "cuenta": "Cuentas por Pagar", "valor": "15000", "fecha": "2023-12-31"}
+                {"categoria": "Pasivo No Corriente", "cuenta": "Otras Cuentas por Pagar", "valor": "15000", "fecha": "2023-12-31"}
             ],
             "estado_resultado_integral": [
-                {"categoria": "Ingresos", "cuenta": "Ventas", "valor": "100000", "fecha": "31-12-2023"},
-                {"categoria": "Gastos", "cuenta": "Costo de Ventas", "valor": "10000", "fecha": "31-12-2023"}
+                {"categoria": "Ingresos", "cuenta": "Ventas", "valor": "100000", "fecha": "2023-12-31"},
+                {"categoria": "Gastos", "cuenta": "Costo de Ventas", "valor": "10000", "fecha": "2023-12-31"}
             ]
             }
 
@@ -450,13 +452,13 @@ def run(id_lote,id_doc,sql_connector):
 
             {
             "estado_de_situacion_financiera": [
-                {"categoria": "Activo Corriente", "cuenta": "Caja y Bancos", "valor": "50000", "fecha": "31-12-2023"},
-                {"categoria": "Activo No Corriente", "cuenta": "Inversiones", "valor": "200000", "fecha": "31-12-2023"},
-                {"categoria": "Pasivo Corriente", "cuenta": "Cuentas por Pagar", "valor": "15000", "fecha": "31-12-2023"}
+                {"categoria": "Activo Corriente", "cuenta": "Caja y Bancos", "valor": "50000", "fecha": "2023-12-31"},
+                {"categoria": "Activo No Corriente", "cuenta": "Inversiones", "valor": "200000", "fecha": "2023-12-31"},
+                {"categoria": "Pasivo Corriente", "cuenta": "Cuentas por Pagar", "valor": "15000", "fecha": "2023-12-31"}
             ],
             "estado_resultado_integral": [
-                {"categoria": "Ingresos", "cuenta": "Ventas", "valor": "100000", "fecha": "31-12-2023"},
-                {"categoria": "Gastos", "cuenta": "Costo de Ventas", "valor": "10000", "fecha": "31-12-2023"}
+                {"categoria": "Ingresos", "cuenta": "Ventas", "valor": "100000", "fecha": "2023-12-31"},
+                {"categoria": "Gastos", "cuenta": "Costo de Ventas", "valor": "10000", "fecha": "2023-12-31"}
             ]
             }
 
@@ -526,40 +528,103 @@ def run(id_lote,id_doc,sql_connector):
             pd.set_option('display.max_rows', None)
             pd.set_option('display.max_columns', None)
             pd.set_option('display.width', None)
+            
+            df_balances['mm'] = pd.to_datetime(df_balances['periodo']).dt.month
+            mes = df_balances['mm'].iloc[0]
+            periodo_archivo = df_balances['periodo'].iloc[0]
+            print(mes)
+            #Consultar cliente existe y extrae id_cliente
+            cuit = 0
+            id_cliente=9999
+            nombre_cliente ='PRUEBA'
+            select_cliente = f"Select id_cliente,NombreComercial from TB_cliente where CodigoCiiu ='{id_cliente}'"
+            consulta_cliente=sql_connector.read_data(select_cliente)
+            for row in consulta_cliente:
+                id_cliente = row.id_cliente
+                nombre_cliente = row.NombreComercial
 
-            ##to do
+            #Creacion de id_balance
+            #####(Falta ajustar cuando hayan multiples periodos)
+            select_id_balance = 'Select isnull(max(id_balance),0) as id_balance from TB_BALANCE'
+            consulta_max_id_balance=sql_connector.read_data(select_id_balance)
+            for row_b in consulta_max_id_balance:
+                id_balance = row_b.id_balance +1
+
+            insert_tb_lpa_balance = "Insert into TB_LPA_BALANCE (id_balance,num_calificacion,id_cliente,nombre_cliente,id_rating,id_modelo_bal,estatus,mes,estado,usuario_creacion,fecha_asignacion) "\
+                f"values ({id_balance},'1','{id_cliente}','{nombre_cliente}',1,1,'Regular','{mes}','A','LPA','{periodo_archivo}')"
+            print(insert_tb_lpa_balance)
+            sql_connector.insert_data(insert_tb_lpa_balance)
+
+            insert_tl_lpa_creacion = "Insert into TL_LPA_CREACION (id_ejecucion,id_documento,id_periodo,id_balance_temp,fecha_asignacion,estado) "\
+                f"values ({id_lote},{id_doc},1,{id_balance},'{periodo_archivo}','A')"
+            print(insert_tl_lpa_creacion)
+            sql_connector.insert_data(insert_tl_lpa_creacion)
+            
+            ##to do (Check)(Revisar)
             #Cambiar el id_documento
             #####################Falta crear id doc
-            insert_statement_inic = "Insert into TL_BALANCE (id_ejecucion,id_documento, id_periodo, cuit, nombre_documento, fecha_asignacion,pag_procesadas, estado, observacion) "\
-               f"values({id_lote},{id_doc},1,'{cuit}','{nombre_doc}','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}','{paginas_encontradas}','P','NA')"
-            insert_statement_periodo = "Insert into TL_LPA_PERIODO (id_documento, id_periodo, fecha_asignacion) "\
-               f"values({id_doc},1,'{row['periodo']}')"
-            print(insert_statement_inic) 
-            sql_connector.insert_data(insert_statement_inic) 
-            sql_connector.insert_data(insert_statement_periodo) 
+            insert_TL_BALANCE = "Insert into TL_BALANCE (id_ejecucion,id_documento, id_periodo, cuit, nombre_documento, fecha_asignacion,pag_procesadas, estado,proceso, observacion,fecha_creacion) "\
+               f"values({id_lote},{id_doc},1,'{cuit}','{nombre_doc}','{periodo_archivo}','{paginas_encontradas}','P','A','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}')"
+            print(insert_TL_BALANCE) 
+            sql_connector.insert_data(insert_TL_BALANCE) 
+            
+
+            print(df_balances)
+            print(df_financiero)
+            
             for index,row in df_balances.iterrows():
-                
-                insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, orden_cuenta, cuenta_extraida, categoria_clasificada, cuenta_clasificada,notas, fecha_proceso) " \
-                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria']}','falta implementar','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');" 
-                print(insert_tl_lpa_cuentas) 
-                if row['categoria'] == 'activo corriente':
-                    insert_tl_lpa_valores= "Insert into TL_LPA_VALORES (id_documento, id_periodo, id_cuenta,valor,confianza, fecha_proceso,variable) " \
-                                        f"values({id_doc},1,'npi','{row['valor']}','No implementado','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}',{diccionario_var_activo_corriente[row['cuenta']]});" 
-                elif   row['categoria'] == 'activo no corriente': 
-                    insert_tl_lpa_valores= "Insert into TL_LPA_VALORES (id_documento, id_periodo, id_cuenta,valor,confianza, fecha_proceso,variable) " \
-                                        f"values({id_doc},1,'npi','{row['valor']}','No implementado','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}',{diccionario_var_activo_no_corriente[row['cuenta']]});" 
-                elif   row['categoria'] == 'pasivo corriente':
-                    insert_tl_lpa_valores= "Insert into TL_LPA_VALORES (id_documento, id_periodo, id_cuenta,valor,confianza, fecha_proceso,variable) " \
-                                        f"values({id_doc},1,'npi','{row['valor']}','No implementado','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}',{diccionario_var_pasivo_corriente[row['cuenta']]});" 
-                elif   row['categoria'] == 'pasivo no corriente': 
-                    insert_tl_lpa_valores= "Insert into TL_LPA_VALORES (id_documento, id_periodo, id_cuenta,valor,confianza, fecha_proceso,variable) " \
-                                        f"values({id_doc},1,'npi','{row['valor']}','No implementado','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}',{diccionario_var_pasivo_no_corriente[row['cuenta']]});" 
-                else: 
-                    insert_tl_lpa_valores= "Insert into TL_LPA_VALORES (id_documento, id_periodo, id_cuenta,valor,confianza, fecha_proceso,variable) " \
-                                        f"values({id_doc},1,'npi','{row['valor']}','No implementado','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}',{diccionario_var_patrimonio[row['cuenta']]});" 
+                if row['valor'] == '':
+                    row['valor'] = 0
+                insert_tl_lpa_valores= "Insert into TL_LPA_VALORES (id_documento, id_periodo, id_cuenta,valor_leido,confianza, usuario_modificacion,fecha_modificacion) " \
+                                        f"values({id_doc},1,{index},'{row['valor']}',0.8,'LPA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');"
                 print(insert_tl_lpa_valores) 
-                sql_connector.insert_data(insert_tl_lpa_cuentas)         
                 sql_connector.insert_data(insert_tl_lpa_valores)
+                if str(row['categoria_reclasificada']).lower() == 'activo corriente':
+                    insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada, cuenta_clasificada,cuenta_final,variable,nota, fecha_modificacion) " \
+                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','{diccionario_var_activo_corriente[row['cuenta_reclasificada']]}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');"    
+                    update_tb_lpa_balance= f"Update TB_LPA_BALANCE set {diccionario_var_activo_corriente[row['cuenta_reclasificada']]}={row['valor']} " \
+                        f"where id_balance={id_balance}"
+                    insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,variable,cuenta_final,valor_inicial, valor_final) " \
+                                    f"values({id_balance},{index},'{row['cuenta']}','{diccionario_var_activo_corriente[row['cuenta_reclasificada']]}','{row['cuenta_reclasificada']}',{row['valor']},{row['valor']});"
+                elif str(row['categoria_reclasificada']).lower() == 'activo no corriente': 
+                    insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada, cuenta_clasificada,cuenta_final,variable,nota, fecha_modificacion) " \
+                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','{diccionario_var_activo_no_corriente[row['cuenta_reclasificada']]}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');"              
+                    update_tb_lpa_balance= f"Update TB_LPA_BALANCE set {diccionario_var_activo_no_corriente[row['cuenta_reclasificada']]}={row['valor']} " \
+                        f"where id_balance={id_balance}" 
+                    insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,variable,cuenta_final,valor_inicial, valor_final) " \
+                                    f"values({id_balance},{index},'{row['cuenta']}','{diccionario_var_activo_no_corriente[row['cuenta_reclasificada']]}','{row['cuenta_reclasificada']}',{row['valor']},{row['valor']});"
+                elif str(row['categoria_reclasificada']).lower() == 'pasivo corriente':
+                    insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada, cuenta_clasificada,cuenta_final,variable,nota, fecha_modificacion) " \
+                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','{diccionario_var_pasivo_corriente[row['cuenta_reclasificada']]}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');"              
+                    update_tb_lpa_balance= f"Update TB_LPA_BALANCE set {diccionario_var_pasivo_corriente[row['cuenta_reclasificada']]}={row['valor']} " \
+                        f"where id_balance={id_balance}"
+                    insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,variable,cuenta_final,valor_inicial, valor_final) " \
+                                    f"values({id_balance},{index},'{row['cuenta']}','{diccionario_var_pasivo_corriente[row['cuenta_reclasificada']]}','{row['cuenta_reclasificada']}',{row['valor']},{row['valor']});"
+                elif str(row['categoria_reclasificada']).lower() == 'pasivo no corriente': 
+                    insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada, cuenta_clasificada,cuenta_final,variable,nota, fecha_modificacion) " \
+                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','{diccionario_var_pasivo_no_corriente[row['cuenta_reclasificada']]}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');"              
+                    update_tb_lpa_balance= f"Update TB_LPA_BALANCE set {diccionario_var_pasivo_no_corriente[row['cuenta_reclasificada']]}={row['valor']} " \
+                        f"where id_balance={id_balance}"
+                    insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,variable,cuenta_final,valor_inicial, valor_final) " \
+                                    f"values({id_balance},{index},'{row['cuenta']}','{diccionario_var_pasivo_no_corriente[row['cuenta_reclasificada']]}','{row['cuenta_reclasificada']}',{row['valor']},{row['valor']});"
+                elif str(row['categoria_reclasificada']).lower() == 'patrimonio':  
+                    insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada, cuenta_clasificada,cuenta_final,variable,nota, fecha_modificacion) " \
+                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','{diccionario_var_patrimonio[row['cuenta_reclasificada']]}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');" 
+                    update_tb_lpa_balance= f"Update TB_LPA_BALANCE set {diccionario_var_patrimonio[row['cuenta_reclasificada']]}={row['valor']} " \
+                        f"where id_balance={id_balance}"
+                    insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,variable,cuenta_final,valor_inicial, valor_final) " \
+                                    f"values({id_balance},{index},'{row['cuenta']}','{diccionario_var_patrimonio[row['cuenta_reclasificada']]}','{row['cuenta_reclasificada']}',{row['valor']},{row['valor']});"
+                elif str(row['categoria_reclasificada']).lower() == 'none':  
+                    insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada, cuenta_clasificada,cuenta_final,variable,nota, fecha_modificacion) " \
+                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','NA','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');" 
+                    print ("fila no se pudo reclasificar")
+                    print (row)
+                print(insert_tl_lpa_cuentas) 
+                print(update_tb_lpa_balance) 
+                print(insert_t_balance) 
+                sql_connector.insert_data(insert_tl_lpa_cuentas)     
+                sql_connector.insert_data(update_tb_lpa_balance)
+                sql_connector.insert_data(insert_t_balance)
             #incrementa el id documento
             id_doc=id_doc+1
             #imprime las cuentas extraidas
