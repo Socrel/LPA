@@ -9,6 +9,7 @@ from functools import wraps
 import os
 from connection_IVA_BBDD import SQLConnector
 import logging
+import onBase_download as onBase
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'supersecretkey'
@@ -116,7 +117,6 @@ def get_links():
         return handle_400_error(e)
     except Exception as e:
         return handle_exception(e)
-        #return handle_exception(e)
 
 @app.route('/lpa/token', methods=['POST'])
 def issue_token():
@@ -132,20 +132,59 @@ def issue_token():
 def index():
     return "<h1>Hello</h1>"
 
+@app.route('/lpa/onbase/existe', methods=['GET'])
+@token_required
+def document_exist():
+    print("entra al endpoint")
+    try:
+        if not request.json or 'DocumentId' not in request.json :
+            raise ValueError("Faltan datos necesarios en la solicitud")
+        
+        body = {
+            'DocumentId':request.json.get('DocumentId', '')
+        }
+        
+        if onBase.consultar_archivo(body['DocumentId']):
+            response_body = {
+                'Succes':True,
+                'Message':'Documento existe en OnBase',
+                'Status':200,
+                'Data':body['DocumentId'],
+            }
+        else:
+            response_body = {
+                'Succes':False,
+                'Message':'Documento No eciste',
+                'Status':200,
+                'Data':None,
+            }
+        return jsonify(response_body), 200
+    except ValueError as e:
+        return handle_400_error(e)
+    except Exception as e:
+        return handle_exception(e)
+
 def inserta_encolado(body):
+    select_id_max = 'Select isnull(max(id_onbase),0) as id_onbase from TB_DOCUMENTOS_ENCOLADOS'
+    consulta_max_id=sql_connector.read_data(select_id_max)
+    for row in consulta_max_id:
+        id_onbase = row.id_onbase +1
     for document in body['Documents']:
-            insert_statement_inic = "Insert into TB_DOCUMENTOS_ENCOLADOS (user_onbase, client_number, type_id,identification,type_person,code_country,client_name,code_industry,id_doc,periodo,on_demand,fecha_creacion) "\
-            f"values('{body['User']}','{document['ClientNumber']}','{document['TypeId']}','{document['Identification']}','{document['TypePerson']}','{document['CodeCountry']}','{document['Name']}','{document['CodeIndustry']}',{document['IdDoc']},{document['Periodo']},{body['OnDemand']},'{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}')"
-    
-    print(insert_statement_inic)
-    #sql_connector.insert_data(insert_statement_inic)
+        insert_statement_inic = "Insert into TB_DOCUMENTOS_ENCOLADOS (id_onbase, user_onbase, client_number, type_id,identification,type_person,code_country,client_name,code_industry,id_doc,periodo,on_demand,fecha_creacion) "\
+            f"values({id_onbase},'{body['User']}','{document['ClientNumber']}','{document['TypeId']}','{document['Identification']}','{document['TypePerson']}','{document['CodeCountry']}','{document['Name']}','{document['CodeIndustry']}',{document['IdDoc']},{document['Periodo']},{body['OnDemand']},'{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}')"
+        print(body['OnDemand'])
+        if body['OnDemand']=='1':
+            onBase.descargar_archivo(id_onbase,document['IdDoc'],document['Identification'],document['Periodo'],'onDemand')
+        else:
+            onBase.descargar_archivo(id_onbase,document['IdDoc'],document['Identification'],document['Periodo'],'batch')
+        sql_connector.insert_data(insert_statement_inic)
     return insert_statement_inic
-    ##sql_connector.insert_data(insert_statement_inic)
+
 
 
 if __name__ == '__main__':
-    #sql_connector = SQLConnector(server, database, user, password)
-    #sql_connector.connect()
+    sql_connector = SQLConnector(server, database, user, password)
+    sql_connector.connect()
     app.run(debug=True,ssl_context='adhoc',host='0.0.0.0')
     """
     server_port = os.environ.get('PORT', '5000')
