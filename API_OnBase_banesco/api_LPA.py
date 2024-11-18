@@ -170,8 +170,8 @@ def inserta_encolado(body):
     for row in consulta_max_id:
         id_onbase = row.id_onbase +1
     for document in body['Documents']:
-        insert_statement_inic = "Insert into TB_DOCUMENTOS_ENCOLADOS (id_onbase, user_onbase, client_number, type_id,identification,type_person,code_country,client_name,code_industry,id_doc,periodo,on_demand,fecha_creacion) "\
-            f"values({id_onbase},'{body['User']}','{document['ClientNumber']}','{document['TypeId']}','{document['Identification']}','{document['TypePerson']}','{document['CodeCountry']}','{document['Name']}','{document['CodeIndustry']}',{document['IdDoc']},{document['Periodo']},{body['OnDemand']},'{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}')"
+        insert_statement_inic = "Insert into TB_DOCUMENTOS_ENCOLADOS (id_onbase, user_onbase, client_number, type_id,identification,type_person,code_country,client_name,code_industry,id_doc,periodo,on_demand,fecha_creacion,procesado) "\
+            f"values({id_onbase},'{body['User']}','{document['ClientNumber']}','{document['TypeId']}','{document['Identification']}','{document['TypePerson']}','{document['CodeCountry']}','{document['Name']}','{document['CodeIndustry']}',{document['IdDoc']},{document['Periodo']},{body['OnDemand']},'{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}',0)"
         print(body['OnDemand'])
         if body['OnDemand']=='1':
             onBase.descargar_archivo(id_onbase,document['IdDoc'],document['Identification'],document['Periodo'],'onDemand')

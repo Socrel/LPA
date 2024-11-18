@@ -188,7 +188,7 @@ def obtener_reclasificacion(cuenta, categoria, diccionario_cuentas, umbral_simil
     # Si no se encuentra coincidencia
     return None, None
 
-def run(id_lote,id_doc,id_onbase,cuit,sql_connector,carpeta_entrada):
+def run(id_lote,id_doc,id_onbase,cuit,sql_connector,carpeta_entrada,periodo):
     
     paginas_encontradas =''
     # Parse command-line arguments
@@ -232,15 +232,14 @@ def run(id_lote,id_doc,id_onbase,cuit,sql_connector,carpeta_entrada):
     for key, value in diccionario_var_activo_no_corriente.items() :
         print (key, value)
     # Iterar sobre los archivos PDF en la carpeta
-    for pdf_IVA_index,archivo_pdf in enumerate(archivos_en_carpeta):
-        if archivo_pdf.endswith(".PDF") or archivo_pdf.endswith(".pdf"):
-            pdf_path = os.path.join(carpeta_pdf_in, archivo_pdf)
-            pdf_path_out = os.path.join(carpeta_pdf_out, archivo_pdf)
-            print(f"Procesando archivo: {pdf_path}")
-            print(f"index: {pdf_IVA_index}")
-            nombre_doc = archivo_pdf.replace(".pdf","")
-        id_ejecucion = id_ejecucion+1
-
+    archivo_pdf = f'{id_onbase}_{cuit}_{periodo}.pdf'
+    pdf_path = os.path.join(carpeta_pdf_in, archivo_pdf)
+    pdf_path_out = os.path.join(carpeta_pdf_out, archivo_pdf)
+    nombre_doc = archivo_pdf.replace(".pdf","")
+    print(f"Procesando archivo: {pdf_path}")
+    nombre_doc = archivo_pdf.replace(".pdf","")
+    id_ejecucion = id_ejecucion+1
+    if os.path.exists(pdf_path):
         if (nombre_doc =='ejemplo extraction cuentas'):
             cuit=30708622555
             nombre_cliente='Pueba'
@@ -470,7 +469,6 @@ def run(id_lote,id_doc,id_onbase,cuit,sql_connector,carpeta_entrada):
             #print(NEON_GREEN + "Response: \n\n" + response["estado_de_situacion_financiera"] + RESET_COLOR)
             #print (response[0])
 
-            cuit=30708622555
             nombre_cliente='prueba'
 
             # Carga el string JSON como un objeto Python (en este caso, una lista de diccionarios)
@@ -591,7 +589,7 @@ def run(id_lote,id_doc,id_onbase,cuit,sql_connector,carpeta_entrada):
             #Cambiar el id_documento
             #####################Falta crear id doc
             insert_TL_BALANCE = "Insert into TL_BALANCE (id_ejecucion,id_documento, id_periodo, cuit, nombre_documento, fecha_asignacion,pag_procesadas, estado,proceso, observacion,fecha_creacion) "\
-               f"values({id_lote},{id_doc},1,'{cuit}','{nombre_doc}','{periodo_archivo}','{paginas_encontradas}','P','A','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}')"
+            f"values({id_lote},{id_doc},1,'{cuit}','{nombre_doc}','{periodo_archivo}','{paginas_encontradas}','P','A','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}')"
             print(insert_TL_BALANCE) 
             sql_connector.insert_data(insert_TL_BALANCE) 
             
@@ -663,3 +661,5 @@ def run(id_lote,id_doc,id_onbase,cuit,sql_connector,carpeta_entrada):
         
         #Mueve el archivo
         os.replace(pdf_path, pdf_path_out)
+    else:
+        print('No existe archivo')
