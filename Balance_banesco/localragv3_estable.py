@@ -12,6 +12,12 @@ import os
 from ocr_preprocessing_Rotate import rotate_page_pdf
 import cv2
 from datetime import datetime
+import easyocr
+import cv2
+import re
+
+import torch
+import torch.nn.functional as F
 # ANSI escape codes for colors
 PINK = '\033[95m'
 CYAN = '\033[96m'
@@ -19,12 +25,7 @@ YELLOW = '\033[93m'
 NEON_GREEN = '\033[92m'
 RESET_COLOR = '\033[0m'
 
-import easyocr
-import cv2
-import re
 
-import torch
-import torch.nn.functional as F
 
 #temporal para visualzar pdf
 #import matplotlib.pyplot as plt
@@ -50,10 +51,11 @@ def procesar_pagina_con_ocr(image, palabras_clave_regex, alto_region_superior=50
     # Normalizar texto detectado (eliminar caracteres no deseados si es necesario)
     texto_detectado = re.sub(r'[^\w\s]', '', texto_detectado)  # Elimina caracteres especiales
 
+    print (texto_detectado)
     # Buscar cualquier coincidencia de las palabras clave usando regex
     for regex in palabras_clave_regex:
         # Modificar la expresión regular para permitir errores tipográficos
-        regex_modificado = regex.replace("situacion", "(situacion|sltuacion)")  # Ejemplo de error tipográfico permitido
+        regex_modificado = regex.replace("situacion", "(situacion|sltuacion|situación)")  # Ejemplo de error tipográfico permitido
         regex_modificado = regex_modificado.replace("resultado", "(resultado|resultados)")
 
         if re.search(regex_modificado, texto_detectado):
@@ -63,36 +65,19 @@ def procesar_pagina_con_ocr(image, palabras_clave_regex, alto_region_superior=50
 
 palabras_clave_regex = [
     r"estado de situación financiera",
+    r"estado de situacion patrimonial",
     r"estado consolidado de situación financiera",
     r"estado consolidado de resultados y otras utilidades integrales",
     r"estado de situacion financiera",
     r"estado de resultados",
     r"estado de resultados integrales",
-    r"estado de resultado"
+    r"estado de resultado",
+    r"Balance Sheet",
+    r"balance shcet "
 ]
 
 diccionario_cuentas =[]
-diccionario_cuentas_2 = [
-    ("Caja y Banco", "Activo Corriente", "Disponibilidades","Activo Corriente"),
-    ("Efectivo en caja y bancos", "Activo Corriente", "Disponibilidades","Activo Corriente"),
-    ("Cuentas por cobrar - clientes", "Activo Corriente", "Cuentas y Efectos por Cobrar Clientes Nacionales","Activo Corriente"),
-    ("Cuentas por cobrar, neto", "Activo Corriente", "Créditos por Ventas Ctes","Activo Corriente"),
-    ("Otras cuentas por cobrar", "Activo Corriente", "Créditos por Ventas Ctes","Activo Corriente"),
-    ("Inventario de viviendas", "Activo Corriente", "Bienes de Cambio Ctes","Activo Corriente"),
-    ("Inventario de materiales", "Activo Corriente", "Bienes de Cambio Ctes","Activo Corriente"),
-    ("Pagos anticipados", "Activo Corriente", "Otros Activos Ctes","Activo Corriente"),
-    ("Adelantos a proveedores", "Activo Corriente", "Otros Activos Ctes","Activo Corriente"),
-    ("Efectivo", "Activo Corriente", "Disponibilidades","Activo Corriente"),
-    ("Prestamos por Cobrar, Parte Relacionadas", "Activo No Corriente", "Otros Activos No Ctes","Activo No Corriente"),
-    ("Prestamos por Cobrar, parte relacionadas prop...", "Activo No Corriente", "Otros Activos No Ctes","Activo No Corriente"),
-    ("Propiedad, maquinaria, mobiliario, equipo y mejoras, neto", "Activo No Corriente", "Otros Activos No Ctes","Activo No Corriente"),
-    ("Capital Adicional Pagado", "Activo No Corriente", "Otros Activos No Ctes","Activo No Corriente"),
-    ("Activos bajo contratos de arrendamiento financiero","Activo No Corriente", "Otros Activos No Ctes","Activo No Corriente"),
-    ("Acciones de Capital", "Patrimonio", "Capital y Ajuste","Patrimonio"),
-    ("Capital Adicional Pagado", "Patrimonio", "Otros","Patrimonio"),
-    ("Ganancias Retenidas", "Patrimonio", "Resultados No Asignados","Patrimonio"),
-    # Añade todas las cuentas que necesites
-]
+
 
 #Crea diccionario de variables
 diccionario_var_activo_corriente={}
@@ -101,6 +86,7 @@ diccionario_var_activo_no_corriente={}
 diccionario_var_pasivo_no_corriente={}
 diccionario_var_patrimonio={}
 diccionario_var_estado_resultados={}
+diccionario_resultantes={}
 
 
 # Function to get relevant context from the vault based on user input
@@ -153,55 +139,71 @@ def ollama_chat(user_input, system_message, vault_embeddings, vault_content, oll
     return response.choices[0].message.content
 
 def obtener_reclasificacion(cuenta, categoria, diccionario_cuentas, umbral_similitud=0.9):
-    """
-    Función para obtener la reclasificación de cuenta y categoría basándose en la similitud de embeddings.
+   """
+   Función para obtener la reclasificación de cuenta y categoría basándose en la similitud de embeddings.
 
-    Parámetros:
-    - cuenta (str): Cuenta a comparar.
-    - categoria (str): Categoría a comparar.
-    - diccionario_cuentas (list of tuples): Lista de tuplas con el formato 
-      (cuenta_diccionario, cat_diccionario, reclasificacion, categoria_reclasificacion).
-    - umbral_similitud (float): Umbral de similitud de coseno (valor entre 0 y 1), por defecto 0.9.
+   Parámetros:
+   - cuenta (str): Cuenta a comparar.
+   - categoria (str): Categoría a comparar.
+   - diccionario_cuentas (list of tuples): Lista de tuplas con el formato
+     (cuenta_diccionario, cat_diccionario, reclasificacion, categoria_reclasificacion).
+   - umbral_similitud (float): Umbral de similitud de coseno (valor entre 0 y 1), por defecto 0.9.
 
-    Retorna:
-    - tuple: (cuenta_reclasificada, categoria_reclasificada) o (None, None) si no se encuentra coincidencia.
-    """
+   Retorna:
+   - tuple: (cuenta_reclasificada, categoria_reclasificada) o (None, None) si no se encuentra coincidencia.
+   """
 
-    # Genera embeddings para la cuenta y categoría proporcionadas
-    cuenta_emb = torch.tensor(ollama.embeddings(model='mxbai-embed-large', prompt=cuenta)["embedding"])
-    categoria_emb = torch.tensor(ollama.embeddings(model='mxbai-embed-large', prompt=categoria)["embedding"])
+   # Genera embeddings para la cuenta y categoría proporcionadas
+   cuenta_emb = torch.tensor(ollama.embeddings(model='mxbai-embed-large', prompt=cuenta)["embedding"])
+   categoria_emb = torch.tensor(ollama.embeddings(model='mxbai-embed-large', prompt=categoria)["embedding"])
 
-    # Itera sobre el diccionario para buscar una coincidencia
-    for cuenta_diccionario, cat_diccionario, reclasificacion, categoria_reclasificacion in diccionario_cuentas:
-        # Genera embeddings para la cuenta y categoría del diccionario
-        cuenta_dic_emb = torch.tensor(ollama.embeddings(model='mxbai-embed-large', prompt=cuenta_diccionario)["embedding"])
-        cat_dic_emb = torch.tensor(ollama.embeddings(model='mxbai-embed-large', prompt=cat_diccionario)["embedding"])
-        
-        # Calcula la similitud de coseno para cuenta y categoría
-        similitud_cuenta = F.cosine_similarity(cuenta_emb, cuenta_dic_emb, dim=0)
-        similitud_categoria = F.cosine_similarity(categoria_emb, cat_dic_emb, dim=0)
-        
-        # Verifica si ambas similitudes superan el umbral
-        if similitud_cuenta >= umbral_similitud and similitud_categoria >= umbral_similitud:
-            return reclasificacion, categoria_reclasificacion
-    
-    # Si no se encuentra coincidencia
-    return None, None
+   max_similitud_cuenta = 0
+   cuenta_reclasificada = None
+   categoria_reclasificada = None
+
+   # Itera sobre el diccionario para buscar una coincidencia
+   for cuenta_diccionario, cat_diccionario, reclasificacion, categoria_reclasificacion in diccionario_cuentas:
+       # Genera embeddings para la cuenta y categoría del diccionario
+       cuenta_dic_emb = torch.tensor(ollama.embeddings(model='mxbai-embed-large', prompt=cuenta_diccionario)["embedding"])
+       cat_dic_emb = torch.tensor(ollama.embeddings(model='mxbai-embed-large', prompt=cat_diccionario)["embedding"])
+
+       # Calcula la similitud de coseno para cuenta y categoría
+       similitud_cuenta = F.cosine_similarity(cuenta_emb, cuenta_dic_emb, dim=0)
+       similitud_categoria = F.cosine_similarity(categoria_emb, cat_dic_emb, dim=0)
+
+       # Verifica si ambas similitudes superan el umbral
+       if similitud_cuenta >= umbral_similitud and similitud_categoria >= umbral_similitud:
+
+           if similitud_cuenta > max_similitud_cuenta:
+               max_similitud_cuenta = similitud_cuenta
+               cuenta_reclasificada = reclasificacion
+               categoria_reclasificada = categoria_reclasificacion
+
+           # Retorna la mejor coincidencia encontrada
+           print(max_similitud_cuenta)
+   return cuenta_reclasificada, categoria_reclasificada
+
+   # Si no se encuentra coincidencia
+   return None, None
 
 def run(id_lote,id_doc,id_onbase,cuit,sql_connector,carpeta_entrada,periodo):
     
+    ruta_texto_reconstruido = None
     paginas_encontradas =''
     # Parse command-line arguments
     print(NEON_GREEN + "Parsing command-line arguments..." + RESET_COLOR)
     parser = argparse.ArgumentParser(description="Ollama Chat")
-    parser.add_argument("--model", default="financial-model-lpa", help="Ollama model to use (default: financial-model-lpa)")
+    #parser.add_argument("--model", default="financial-model-lpa", help="Ollama model to use (default: financial-model-lpa)")
+    parser.add_argument("--model", default="llama3.1", help="Ollama model to use (default: financial-model-lpa)")
     args = parser.parse_args()
 
     
     ubicacion_actual = os.getcwd()
+    carpeta_padre = os.path.dirname(ubicacion_actual)
+    carpeta_raiz =os.path.dirname(carpeta_padre)
     # Ruta a la carpeta que contiene los archivos PDF
-    carpeta_pdf_in = os.path.join(ubicacion_actual, 'MLPA\BALANCES\IN',carpeta_entrada)
-    carpeta_pdf_out = os.path.join(ubicacion_actual, 'MLPA\BALANCES\OUT')
+    carpeta_pdf_in = os.path.join(carpeta_raiz, 'MLPA/BALANCES/IN',carpeta_entrada)
+    carpeta_pdf_out = os.path.join(carpeta_raiz, 'MLPA/BALANCES/OUT')
     # Obtener la lista de archivos en la carpeta
     archivos_en_carpeta = os.listdir(carpeta_pdf_in)
     #id ejecucion
@@ -229,8 +231,10 @@ def run(id_lote,id_doc,id_onbase,cuit,sql_connector,carpeta_entrada,periodo):
         else:
             diccionario_var_estado_resultados[registro[2]] = registro[0]
 
-    for key, value in diccionario_var_activo_no_corriente.items() :
-        print (key, value)
+    for registro in result_varianles:
+        diccionario_resultantes[registro[2]] = registro[0]
+    #for key, value in diccionario_var_activo_no_corriente.items() :
+    #    print (key, value)
     # Iterar sobre los archivos PDF en la carpeta
     archivo_pdf = f'{id_onbase}_{cuit}_{periodo}.pdf'
     pdf_path = os.path.join(carpeta_pdf_in, archivo_pdf)
@@ -369,14 +373,13 @@ def run(id_lote,id_doc,id_onbase,cuit,sql_connector,carpeta_entrada,periodo):
             # Eliminar la imagen temporal
             if os.path.exists(temp_image_path):
                 os.remove(temp_image_path)
-        
         #with open(ruta_texto_reconstruido, 'r', encoding='utf-8') as file:
         #        text = file.read()
 
         # Load the vault content
         print(NEON_GREEN + "Loading vault content..." + RESET_COLOR)
         vault_content = []
-        if os.path.exists(ruta_texto_reconstruido):
+        if ruta_texto_reconstruido is not None and os.path.exists(ruta_texto_reconstruido):
             with open(ruta_texto_reconstruido, "r", encoding='utf-8') as vault_file:
                 vault_content = vault_file.readlines()
         # Generate embeddings for the vault content using Ollama
@@ -399,10 +402,12 @@ def run(id_lote,id_doc,id_onbase,cuit,sql_connector,carpeta_entrada,periodo):
             Tu tarea es extraer **todas** las cuentas de los estados financieros sin texto adicional.
             Responder en español.
             No respondas con texto como Here is the JSON response ni comillas ```        
-            Siempre responde en formato JSON con los siguientes campos: 
-            {'categoria': '...','cuenta': '...', 'valor': '...','fecha': 'yyyy-mm-dd'}.
+            Siempre responde en formato JSON con los siguientes campos: categoria, cuenta, valor, fecha
+            A continuación hay un ejemplo del formato json.
+            {'categoria': '','cuenta': '', 'valor': '','fecha': 'yyyy-mm-dd'}.
 
-            un mismo documento puede tener varios periodos, asegurese de que el valor corresponde al periodo indicado en el documento.
+            Un mismo documento puede tener varios periodos. Solo extrae el ultimo periodo del documento. Asegurese de que el valor corresponde al periodo indicado en el documento.
+            Si el periodo/fecha no trae dia, asume que es el ultimo dia del mes para el campo fecha.
             Instrucciones específicas:
             1. Debes extraer las cuentas encontradas en los estados financieros, clasificándolas en las categorías adecuadas.
             2. Para el **estado de situación financiera**, utiliza únicamente estas categorías:
@@ -419,8 +424,10 @@ def run(id_lote,id_doc,id_onbase,cuit,sql_connector,carpeta_entrada,periodo):
                 - "cuenta": Nombre de la cuenta extraída.
                 - "valor": Valor numérico extraído correspondiente al mismo periodo financiero, pude haber un valor para cada periodo.
                 - "fecha": Fecha del periodo financiero en formato "yyyy-mm-dd".
-            5. No incluyas totales como "Total Activo", "Total Pasivo", o "Total Patrimonio".
+            5. No extraigas totales.
             6. Responde únicamente en formato JSON estructurado, sin texto adicional.
+            7. "Circulante" y "Corriente" son sinonimos, pero siempre usa el termino Corriente.
+            8. "Fijos" y "No corriente" son sinonimos, pero siempre usa el termino No Corriente.
 
             La respuesta debe incluir dos bloques JSON:
             - "estado_de_situacion_financiera": para cuentas relacionadas con el balance general.
@@ -472,7 +479,10 @@ def run(id_lote,id_doc,id_onbase,cuit,sql_connector,carpeta_entrada,periodo):
             nombre_cliente='prueba'
 
             # Carga el string JSON como un objeto Python (en este caso, una lista de diccionarios)
-            data = json.loads(response)
+            if response.endswith("}"):
+                data = json.loads(response)
+            else:
+                data = json.loads(response+"}")
             print(data.items())
             periodo_procesado=data["estado_de_situacion_financiera"][0]["fecha"]
                 #estado cero porque no se ha procesado en la aplicacion
@@ -532,31 +542,18 @@ def run(id_lote,id_doc,id_onbase,cuit,sql_connector,carpeta_entrada,periodo):
             periodo_archivo = df_balances['periodo'].iloc[0]
             print(diferencia_meses)
             #Consultar cliente existe y extrae id_cliente
-            cuit = 20119229724
-            id_cliente=74
             nombre_cliente ='PRUEBA'
-            select_cliente = f"Select id_cliente,NombreComercial,CodigoCiiu from TB_cliente where CodigoCiiu ='{cuit}'"
+            select_cliente = f"Select id_cliente,nombre,num_doc from TB_cliente where num_doc ='{cuit}'"
             consulta_cliente=sql_connector.read_data(select_cliente)
 
             if len(consulta_cliente) == 0:
-                cliente_prospecto = 'Select client_number,type_id,identification,type_person,code_country,client_name,code_industry from TB_DOCUMENTOS_ENCOLADOS'\
-                                    f'where id_onbase={id_onbase} and id_doc={id_doc}'
-                campos_cliente = sql_connector.read_data(cliente_prospecto)
-                
-                select_id_cliente = "Select isnull(max(id_cliente),0) as id_cliente from TB_CLIENTE"
-                consulta_max_id_cliente=sql_connector.read_data(select_id_cliente)
-                for row in consulta_max_id_cliente:
-                    id_cliente = row.id_cliente+1
-                
-                for cliente in campos_cliente:
-                    insert_client = "Insert into TB_CLIENTE (id_cliente,cod_cliente,TipoIdentificacion,NombreComercial,cod_pais,cod_act_economica,CodigoCiiu)"\
-                                    f"values ({id_cliente},'{cliente.client_number}','{cliente.type_id}','{cliente.client_name}','{cliente.code_country}','{cliente.code_industry}','{cliente.identification}')"
-                    print(insert_client)
+                print('Cliente no existe')
             else:        
                 for row in consulta_cliente:
-                    cuit = row.CodigoCiiu
+                    #cuit = row.CodigoCiiu
+                    cuit = row.num_doc
                     id_cliente = row.id_cliente
-                    nombre_cliente = row.NombreComercial
+                    nombre_cliente = row.nombre
 
             #Creacion de id_balance
             #####(Falta ajustar cuando hayan multiples periodos)
@@ -575,8 +572,8 @@ def run(id_lote,id_doc,id_onbase,cuit,sql_connector,carpeta_entrada,periodo):
             else:
                 id_balance_max =id_balance_2
 
-            insert_tb_lpa_balance = "Insert into TB_LPA_BALANCE (id_balance,num_calificacion,id_cliente,nombre_cliente,id_rating,id_modelo_bal,estatus,moneda,unidad_monetaria,tasa_cambio,mes,estado_mes,estado,usuario_creacion,fecha_creacion,fecha_asignacion) "\
-                f"values ({id_balance_max},'1','{id_cliente}','{nombre_cliente}',{id_balance_max},1,'Regular','ARG','Unidad',1,'{diferencia_meses}','Individual','I','LPA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}','{periodo_archivo}')"
+            insert_tb_lpa_balance = "Insert into TB_LPA_BALANCE (id_balance,num_calificacion,id_cliente,nombre_cliente,id_rating,id_modelo_bal,estatus,moneda,unidad_monetaria,tasa_cambio,mes,estado_mes,estado,usuario_creacion,fecha_creacion,fecha_asignacion,norma_contable,auditor) "\
+                f"values ({id_balance_max},'1','{id_cliente}','{nombre_cliente}',{id_balance_max},1,'Auditado','USD','Absolutas',1,'12','Individual','A','LPA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}','{periodo_archivo}','IFRS','NA')"
             print(insert_tb_lpa_balance)
             sql_connector.insert_data(insert_tb_lpa_balance)
 
@@ -589,67 +586,156 @@ def run(id_lote,id_doc,id_onbase,cuit,sql_connector,carpeta_entrada,periodo):
             #Cambiar el id_documento
             #####################Falta crear id doc
             insert_TL_BALANCE = "Insert into TL_BALANCE (id_ejecucion,id_documento, id_periodo, cuit, nombre_documento, fecha_asignacion,pag_procesadas, estado,proceso, observacion,fecha_creacion) "\
-            f"values({id_lote},{id_doc},1,'{cuit}','{nombre_doc}','{periodo_archivo}','{paginas_encontradas}','P','A','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}')"
+            f"values({id_lote},{id_doc},1,'{cuit}','{nombre_doc}','{periodo_archivo}','{paginas_encontradas}','P','A','Se procesó correctamente','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}')"
             print(insert_TL_BALANCE) 
             sql_connector.insert_data(insert_TL_BALANCE) 
-            
 
-            print(df_balances)
-            print(df_financiero)
-            
             for index,row in df_balances.iterrows():
+                flag = False
                 if row['valor'] == '':
                     row['valor'] = 0
-                insert_tl_lpa_valores= "Insert into TL_LPA_VALORES (id_documento, id_periodo, id_cuenta,valor_leido,confianza, usuario_modificacion,fecha_modificacion) " \
-                                        f"values({id_doc},1,{index},'{row['valor']}',0.8,'LPA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');"
-                print(insert_tl_lpa_valores) 
-                sql_connector.insert_data(insert_tl_lpa_valores)
+                
                 if str(row['categoria_reclasificada']).lower() == 'activo corriente':
-                    insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada, cuenta_clasificada,cuenta_final,variable,nota, fecha_modificacion) " \
-                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','{diccionario_var_activo_corriente[row['cuenta_reclasificada']]}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');"    
-                    update_tb_lpa_balance= f"Update TB_LPA_BALANCE set {diccionario_var_activo_corriente[row['cuenta_reclasificada']]}={row['valor']} " \
-                        f"where id_balance={id_balance_max}"
-                    insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,variable,cuenta_final,valor_inicial, valor_final,id_documento) " \
-                                    f"values({id_balance_max},{index},'{row['cuenta']}','{diccionario_var_activo_corriente[row['cuenta_reclasificada']]}','{row['cuenta_reclasificada']}',{row['valor']},{row['valor']},{id_doc});"
+                    flag = True
+                    if row['cuenta_reclasificada'] in diccionario_var_activo_corriente:
+                        insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada, cuenta_clasificada,cuenta_final,variable,nota, fecha_modificacion) " \
+                            f"values({id_doc},{index},'{row['cuenta']}','{row['categoria_reclasificada']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','{diccionario_var_activo_corriente[row['cuenta_reclasificada']]}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');" 
+                        update_tb_lpa_balance= f"Update TB_LPA_BALANCE set {diccionario_var_activo_corriente[row['cuenta_reclasificada']]}={row['valor']} " \
+                            f"where id_balance={id_balance_max}"   
+                        insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,variable,cuenta_final,valor_inicial, valor_final,id_documento) " \
+                            f"values({id_balance_max},{index},'{row['cuenta']}','{diccionario_var_activo_corriente[row['cuenta_reclasificada']]}','{row['cuenta_reclasificada']}',{row['valor']},{row['valor']},{id_doc});"
+                    elif row['cuenta_reclasificada'] in  diccionario_resultantes :
+                        insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada, cuenta_clasificada,cuenta_final,variable,nota, fecha_modificacion) " \
+                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria_reclasificada']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','{diccionario_resultantes[row['cuenta_reclasificada']]}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');" 
+                        update_tb_lpa_balance= f"Update TB_LPA_BALANCE set {diccionario_resultantes[row['cuenta_reclasificada']]}={row['valor']} " \
+                                f"where id_balance={id_balance_max}"
+                        insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,variable,cuenta_final,valor_inicial, valor_final,id_documento) " \
+                            f"values({id_balance_max},{index},'{row['cuenta']}','{diccionario_resultantes[row['cuenta_reclasificada']]}','{row['cuenta_reclasificada']}',{row['valor']},{row['valor']},{id_doc});"
+                    else:
+                        insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada,nota, fecha_modificacion) " \
+                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria_reclasificada']}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');" 
+                        insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,valor_inicial, valor_final,id_documento) " \
+                            f"values({id_balance_max},{index},'{row['cuenta']}',{row['valor']},{row['valor']},{id_doc});"
                 elif str(row['categoria_reclasificada']).lower() == 'activo no corriente': 
-                    insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada, cuenta_clasificada,cuenta_final,variable,nota, fecha_modificacion) " \
-                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','{diccionario_var_activo_no_corriente[row['cuenta_reclasificada']]}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');"              
-                    update_tb_lpa_balance= f"Update TB_LPA_BALANCE set {diccionario_var_activo_no_corriente[row['cuenta_reclasificada']]}={row['valor']} " \
-                        f"where id_balance={id_balance_max}" 
-                    insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,variable,cuenta_final,valor_inicial, valor_final,id_documento) " \
-                                    f"values({id_balance_max},{index},'{row['cuenta']}','{diccionario_var_activo_no_corriente[row['cuenta_reclasificada']]}','{row['cuenta_reclasificada']}',{row['valor']},{row['valor']},{id_doc});"
+                    flag = True
+                    if row['cuenta_reclasificada'] in diccionario_var_activo_no_corriente:
+                        insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada, cuenta_clasificada,cuenta_final,variable,nota, fecha_modificacion) " \
+                            f"values({id_doc},{index},'{row['cuenta']}','{row['categoria_reclasificada']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','{diccionario_var_activo_no_corriente[row['cuenta_reclasificada']]}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');"  
+                        update_tb_lpa_balance= f"Update TB_LPA_BALANCE set {diccionario_var_activo_no_corriente[row['cuenta_reclasificada']]}={row['valor']} " \
+                            f"where id_balance={id_balance_max}"          
+                        insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,variable,cuenta_final,valor_inicial, valor_final,id_documento) " \
+                            f"values({id_balance_max},{index},'{row['cuenta']}','{diccionario_var_activo_no_corriente[row['cuenta_reclasificada']]}','{row['cuenta_reclasificada']}',{row['valor']},{row['valor']},{id_doc});"  
+                    elif row['cuenta_reclasificada'] in  diccionario_resultantes : 
+                        insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada, cuenta_clasificada,cuenta_final,variable,nota, fecha_modificacion) " \
+                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria_reclasificada']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','{diccionario_resultantes[row['cuenta_reclasificada']]}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');" 
+                        update_tb_lpa_balance= f"Update TB_LPA_BALANCE set {diccionario_resultantes[row['cuenta_reclasificada']]}={row['valor']} " \
+                        f"where id_balance={id_balance_max}"
+                        insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,variable,cuenta_final,valor_inicial, valor_final,id_documento) " \
+                            f"values({id_balance_max},{index},'{row['cuenta']}','{diccionario_resultantes[row['cuenta_reclasificada']]}','{row['cuenta_reclasificada']}',{row['valor']},{row['valor']},{id_doc});"  
+                    else:
+                        insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada,nota, fecha_modificacion) " \
+                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria_reclasificada']}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');" 
+                        insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,valor_inicial, valor_final,id_documento) " \
+                            f"values({id_balance_max},{index},'{row['cuenta']}',{row['valor']},{row['valor']},{id_doc});"
                 elif str(row['categoria_reclasificada']).lower() == 'pasivo corriente':
-                    insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada, cuenta_clasificada,cuenta_final,variable,nota, fecha_modificacion) " \
-                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','{diccionario_var_pasivo_corriente[row['cuenta_reclasificada']]}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');"              
-                    update_tb_lpa_balance= f"Update TB_LPA_BALANCE set {diccionario_var_pasivo_corriente[row['cuenta_reclasificada']]}={row['valor']} " \
+                    flag = True
+                    if row['cuenta_reclasificada'] in diccionario_var_pasivo_corriente:
+                        insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada, cuenta_clasificada,cuenta_final,variable,nota, fecha_modificacion) " \
+                            f"values({id_doc},{index},'{row['cuenta']}','{row['categoria_reclasificada']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','{diccionario_var_pasivo_corriente[row['cuenta_reclasificada']]}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');"              
+                        update_tb_lpa_balance= f"Update TB_LPA_BALANCE set {diccionario_var_pasivo_corriente[row['cuenta_reclasificada']]}={row['valor']} " \
+                            f"where id_balance={id_balance_max}"
+                        insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,variable,cuenta_final,valor_inicial, valor_final,id_documento) " \
+                            f"values({id_balance_max},{index},'{row['cuenta']}','{diccionario_var_pasivo_corriente[row['cuenta_reclasificada']]}','{row['cuenta_reclasificada']}',{row['valor']},{row['valor']},{id_doc});"
+                    elif row['cuenta_reclasificada'] in  diccionario_resultantes :
+                        insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada, cuenta_clasificada,cuenta_final,variable,nota, fecha_modificacion) " \
+                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria_reclasificada']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','{diccionario_resultantes[row['cuenta_reclasificada']]}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');" 
+                        update_tb_lpa_balance= f"Update TB_LPA_BALANCE set {diccionario_resultantes[row['cuenta_reclasificada']]}={row['valor']} " \
                         f"where id_balance={id_balance_max}"
-                    insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,variable,cuenta_final,valor_inicial, valor_final,id_documento) " \
-                                    f"values({id_balance_max},{index},'{row['cuenta']}','{diccionario_var_pasivo_corriente[row['cuenta_reclasificada']]}','{row['cuenta_reclasificada']}',{row['valor']},{row['valor']},{id_doc});"
+                        insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,variable,cuenta_final,valor_inicial, valor_final,id_documento) " \
+                            f"values({id_balance_max},{index},'{row['cuenta']}','{diccionario_resultantes[row['cuenta_reclasificada']]}','{row['cuenta_reclasificada']}',{row['valor']},{row['valor']},{id_doc});"
+                    else:
+                        insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada,nota, fecha_modificacion) " \
+                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria_reclasificada']}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');" 
+                        insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,valor_inicial, valor_final,id_documento) " \
+                            f"values({id_balance_max},{index},'{row['cuenta']}',{row['valor']},{row['valor']},{id_doc});"
                 elif str(row['categoria_reclasificada']).lower() == 'pasivo no corriente': 
-                    insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada, cuenta_clasificada,cuenta_final,variable,nota, fecha_modificacion) " \
-                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','{diccionario_var_pasivo_no_corriente[row['cuenta_reclasificada']]}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');"              
-                    update_tb_lpa_balance= f"Update TB_LPA_BALANCE set {diccionario_var_pasivo_no_corriente[row['cuenta_reclasificada']]}={row['valor']} " \
+                    flag = True
+                    if row['cuenta_reclasificada'] in diccionario_var_pasivo_no_corriente:
+                        insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada, cuenta_clasificada,cuenta_final,variable,nota, fecha_modificacion) " \
+                            f"values({id_doc},{index},'{row['cuenta']}','{row['categoria_reclasificada']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','{diccionario_var_pasivo_no_corriente[row['cuenta_reclasificada']]}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');"              
+                        update_tb_lpa_balance= f"Update TB_LPA_BALANCE set {diccionario_var_pasivo_no_corriente[row['cuenta_reclasificada']]}={row['valor']} " \
+                            f"where id_balance={id_balance_max}"
+                        insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,variable,cuenta_final,valor_inicial, valor_final,id_documento) " \
+                            f"values({id_balance_max},{index},'{row['cuenta']}','{diccionario_var_pasivo_no_corriente[row['cuenta_reclasificada']]}','{row['cuenta_reclasificada']}',{row['valor']},{row['valor']},{id_doc});"
+                    elif row['cuenta_reclasificada'] in  diccionario_resultantes :
+                        insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada, cuenta_clasificada,cuenta_final,variable,nota, fecha_modificacion) " \
+                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria_reclasificada']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','{diccionario_resultantes[row['cuenta_reclasificada']]}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');" 
+                        update_tb_lpa_balance= f"Update TB_LPA_BALANCE set {diccionario_resultantes[row['cuenta_reclasificada']]}={row['valor']} " \
                         f"where id_balance={id_balance_max}"
-                    insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,variable,cuenta_final,valor_inicial, valor_final,id_documento " \
-                                    f"values({id_balance_max},{index},'{row['cuenta']}','{diccionario_var_pasivo_no_corriente[row['cuenta_reclasificada']]}','{row['cuenta_reclasificada']}',{row['valor']},{row['valor']},{id_doc});"
+                        insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,variable,cuenta_final,valor_inicial, valor_final,id_documento) " \
+                            f"values({id_balance_max},{index},'{row['cuenta']}','{diccionario_resultantes[row['cuenta_reclasificada']]}','{row['cuenta_reclasificada']}',{row['valor']},{row['valor']},{id_doc});"
+                    else:
+                        insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada,nota, fecha_modificacion) " \
+                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria_reclasificada']}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');" 
+                        insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,valor_inicial, valor_final,id_documento) " \
+                            f"values({id_balance_max},{index},'{row['cuenta']}',{row['valor']},{row['valor']},{id_doc});"
                 elif str(row['categoria_reclasificada']).lower() == 'patrimonio':  
+                    flag = True
+                    if row['cuenta_reclasificada'] in diccionario_var_patrimonio:
+                        insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada, cuenta_clasificada,cuenta_final,variable,nota, fecha_modificacion) " \
+                            f"values({id_doc},{index},'{row['cuenta']}','{row['categoria_reclasificada']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','{diccionario_var_patrimonio[row['cuenta_reclasificada']]}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');" 
+                        update_tb_lpa_balance= f"Update TB_LPA_BALANCE set {diccionario_var_patrimonio[row['cuenta_reclasificada']]}={row['valor']} " \
+                            f"where id_balance={id_balance_max}"
+                        insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,variable,cuenta_final,valor_inicial, valor_final,id_documento) " \
+                            f"values({id_balance_max},{index},'{row['cuenta']}','{diccionario_var_patrimonio[row['cuenta_reclasificada']]}','{row['cuenta_reclasificada']}',{row['valor']},{row['valor']},{id_doc});"
+                    elif row['cuenta_reclasificada'] in  diccionario_resultantes :
+                        insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada, cuenta_clasificada,cuenta_final,variable,nota, fecha_modificacion) " \
+                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria_reclasificada']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','{diccionario_resultantes[row['cuenta_reclasificada']]}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');" 
+                        update_tb_lpa_balance= f"Update TB_LPA_BALANCE set {diccionario_resultantes[row['cuenta_reclasificada']]}={row['valor']} " \
+                        f"where id_balance={id_balance_max}"
+                        insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,variable,cuenta_final,valor_inicial, valor_final,id_documento) " \
+                            f"values({id_balance_max},{index},'{row['cuenta']}','{diccionario_resultantes[row['cuenta_reclasificada']]}','{row['cuenta_reclasificada']}',{row['valor']},{row['valor']},{id_doc});"
+                    else:
+                        insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada,nota, fecha_modificacion) " \
+                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria_reclasificada']}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');" 
+                        insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,valor_inicial, valor_final,id_documento) " \
+                            f"values({id_balance_max},{index},'{row['cuenta']}',{row['valor']},{row['valor']},{id_doc});"
+                elif row['cuenta_reclasificada'] in diccionario_resultantes:
+                    flag = True
                     insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada, cuenta_clasificada,cuenta_final,variable,nota, fecha_modificacion) " \
-                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','{diccionario_var_patrimonio[row['cuenta_reclasificada']]}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');" 
-                    update_tb_lpa_balance= f"Update TB_LPA_BALANCE set {diccionario_var_patrimonio[row['cuenta_reclasificada']]}={row['valor']} " \
+                        f"values({id_doc},{index},'{row['cuenta']}','{row['categoria_reclasificada']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','{diccionario_resultantes[row['cuenta_reclasificada']]}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');"    
+                    update_tb_lpa_balance= f"Update TB_LPA_BALANCE set {diccionario_resultantes[row['cuenta_reclasificada']]}={row['valor']} " \
                         f"where id_balance={id_balance_max}"
                     insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,variable,cuenta_final,valor_inicial, valor_final,id_documento) " \
-                                    f"values({id_balance_max},{index},'{row['cuenta']}','{diccionario_var_patrimonio[row['cuenta_reclasificada']]}','{row['cuenta_reclasificada']}',{row['valor']},{row['valor']},{id_doc});"
-                elif str(row['categoria_reclasificada']).lower() == 'none':  
-                    insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida, categoria_clasificada, cuenta_clasificada,cuenta_final,variable,nota, fecha_modificacion) " \
-                                    f"values({id_doc},{index},'{row['cuenta']}','{row['categoria']}','{row['cuenta_reclasificada']}','{row['cuenta_reclasificada']}','NA','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');" 
+                        f"values({id_balance_max},{index},'{row['cuenta']}','{diccionario_resultantes[row['cuenta_reclasificada']]}','{row['cuenta_reclasificada']}',{row['valor']},{row['valor']},{id_doc});"
+                else:
+                    insert_tl_lpa_cuentas= "Insert into TL_LPA_CUENTAS (id_documento, id_orden, cuenta_extraida,nota, fecha_modificacion) " \
+                        f"values({id_doc},{index},'{row['cuenta']}','NA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');" 
+                    insert_t_balance= "Insert into T_BALANCE (id_balance, id_cuenta, cuenta_inicial,valor_inicial, valor_final,id_documento) " \
+                        f"values({id_balance_max},{index},'{row['cuenta']}',{row['valor']},{row['valor']},{id_doc});"        
+                    
+                if flag:
+                    insert_tl_lpa_valores= "Insert into TL_LPA_VALORES (id_documento, id_periodo, id_cuenta,valor_leido,confianza, usuario_modificacion,fecha_modificacion) " \
+                                        f"values({id_doc},1,{index},'{row['valor']}',0.8,'LPA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');"
+                    print(insert_tl_lpa_valores) 
+                    sql_connector.insert_data(insert_tl_lpa_valores)
+                    print(insert_tl_lpa_cuentas) 
+                    print(update_tb_lpa_balance) 
+                    print(insert_t_balance) 
+                    sql_connector.insert_data(insert_tl_lpa_cuentas)     
+                    sql_connector.insert_data(update_tb_lpa_balance)
+                    sql_connector.insert_data(insert_t_balance)
+                else: 
+                    insert_tl_lpa_valores= "Insert into TL_LPA_VALORES (id_documento, id_periodo, id_cuenta,valor_leido,confianza, usuario_modificacion,fecha_modificacion) " \
+                                        f"values({id_doc},1,{index},'{row['valor']}',0.8,'LPA','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}');"
+                    print(insert_tl_lpa_valores) 
+                    sql_connector.insert_data(insert_tl_lpa_valores)
+                    print(insert_tl_lpa_cuentas) 
+                    print(insert_t_balance) 
+                    sql_connector.insert_data(insert_tl_lpa_cuentas)    
+                    sql_connector.insert_data(insert_t_balance)
                     print ("fila no se pudo reclasificar")
                     print (row)
-                print(insert_tl_lpa_cuentas) 
-                print(update_tb_lpa_balance) 
-                print(insert_t_balance) 
-                sql_connector.insert_data(insert_tl_lpa_cuentas)     
-                sql_connector.insert_data(update_tb_lpa_balance)
-                sql_connector.insert_data(insert_t_balance)
             #incrementa el id documento
             id_doc=id_doc+1
             #imprime las cuentas extraidas
@@ -657,9 +743,10 @@ def run(id_lote,id_doc,id_onbase,cuit,sql_connector,carpeta_entrada,periodo):
             print(df_financiero)     
             print(f"-------------------")
         else:
-            print(YELLOW + "No se generó texto para el document: "+{nombre_doc}+ " Pasando al siguiente documento." + RESET_COLOR) 
+            print(f'No se generó texto para el document: "{nombre_doc} " Pasando al siguiente documento.') 
         
         #Mueve el archivo
         os.replace(pdf_path, pdf_path_out)
     else:
         print('No existe archivo')
+

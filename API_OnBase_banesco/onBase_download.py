@@ -62,7 +62,10 @@ def convert_base64_to_pdf(base64_data,identificacion,periodo,id_onbase,ruta_onDe
 
     # Guarda el archivo PDF
     nombre_archivo= f'{id_onbase}_{identificacion}_{periodo}.pdf'
-    ruta_guardado =os.path.join('C:/Users/David/Documents/Trabajo/LPA_IVA/Balance/MLPA/BALANCES/IN',ruta_onDemand,nombre_archivo)
+    parent_directory = os.path.dirname(os.getcwd())
+    print (parent_directory)
+    ruta_guardado =os.path.join(parent_directory,'/MLPA/BALANCES/IN',ruta_onDemand,nombre_archivo)
+    print (ruta_guardado)
     with open(ruta_guardado, "wb") as pdf_file:
         pdf_file.write(pdf_data)
 

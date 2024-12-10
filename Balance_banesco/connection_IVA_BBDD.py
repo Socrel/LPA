@@ -13,7 +13,7 @@ class SQLConnector:
         try:
             connection_string = (
                 f'DRIVER={{SQL Server}}; SERVER={self.server}; '
-                f'DATABASE={self.database}; UID={self.user}; PWD={self.password}'
+                f'DATABASE={self.database}; UID={self.user}; PWD={self.password}; '
             )
             self.connection = pyodbc.connect(connection_string)
             print("Conexión exitosa")
