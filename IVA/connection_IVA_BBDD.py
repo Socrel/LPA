@@ -27,12 +27,11 @@ class SQLConnector:
         cursor = self.connection.cursor()
         try:
             cursor.execute(query)
-            cursor.commit()
             print("Datos insertados correctamente")
         except Exception as e:
             print(f"Error al insertar datos: {str(e)}")
         finally:
-            cursor.close()
+            cursor.close
 
     def read_data(self, query):
         if self.connection is None:
@@ -46,9 +45,26 @@ class SQLConnector:
         except Exception as e:
             print(f"Error al ejecutar la consulta: {str(e)}")
             return []
+
+    def delete_data(self, query, params=None):
+        if self.connection is None:
+            print("No se ha establecido una conexión.")
+            return
+        
+        cursor = self.connection.cursor()
+        try:
+            if params:
+                cursor.execute(query, params)
+            else:
+                cursor.execute(query)
+            print("Datos eliminados correctamente")
+        except Exception as e:
+            print(f"Error al eliminar datos: {str(e)}")
         finally:
-            cursor.close()
+            cursor.close
 
     def close(self):
         if self.connection is not None:
             self.connection.close()
+
+    

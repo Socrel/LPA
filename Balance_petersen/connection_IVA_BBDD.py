@@ -20,17 +20,26 @@ class SQLConnector:
         except Exception as e:
             print(f"Error al realizar la conexión: {str(e)}")
 
-    def insert_data(self, query):
+    def insert_data(self, query,params=None):
         if self.connection is None:
             print("No se ha establecido una conexión.")
 
         cursor = self.connection.cursor()
         try:
-            cursor.execute(query)
+            if params:
+                cursor.execute(query, params)
+                formatted_query = query.replace('?', '{}').format(*[repr(param) for param in params])
+                print("Consulta completa interpolada:", formatted_query)
+            else:    
+                cursor.execute(query)
+                print("Consulta completa:", query)
             cursor.commit()
             print("Datos insertados correctamente")
         except Exception as e:
             print(f"Error al insertar datos: {str(e)}")
+            formatted_query = query.replace('?', '{}').format(*[repr(param) for param in params])
+            print("Consulta completa interpolada:", formatted_query)
+            self.connection.rollback()
         finally:
             cursor.close()
 

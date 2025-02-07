@@ -6,17 +6,19 @@ from connection_IVA_BBDD import SQLConnector
 from subprocess import Popen
 import os
 
-"""
-server = '10.40.192.77'
-database = 'BBDD_MSRating_Banesco'
-user = 'usr_safi'
-password = r'R4t3aws2o2$'
+
+
+server = 'BSFSBALSQL01T.petersen.corp'
+database = 'BSFAPPRAT'
+user = 'BsfBalance01T'
+password = r'BsfB41ance2022'
 """
 
 server = 'ec2-18-191-95-248.us-east-2.compute.amazonaws.com'
 database = 'BERAPPRAT'
 user = 'sa'
 password = r'#MSApprating#'
+"""
 
 def job():
     print("Empieza el proceso", flush=True)

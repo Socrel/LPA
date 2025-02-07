@@ -11,31 +11,42 @@ from connection_IVA_BBDD import SQLConnector
 import logging
 import onBase_download as onBase
 import jwt
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'NNIlOQLozn2kSO1RGWPTXDtjUI7asPc3iMCQcSSZVSRU0EcPJnZpTL4vtx3KpnJ'
+app.config['SECRET_KEY'] = os.getenv("API_SECRET_KEY")
 oauth = OAuth2Provider(app)
+PSW_USER1 = os.getenv("PSW_USER1")
+PSW_ADM = os.getenv("PSW_ADM")
 
 users = {
-    "user1": generate_password_hash("password"),
-    "admin": generate_password_hash("XE7BtJVpLDWHSc6"),
+    "user1": generate_password_hash(PSW_USER1),
+    "admin": generate_password_hash(PSW_ADM),
 }
 
 now = datetime.now()
-"""
-server = '10.40.192.77'
-database = 'BBDD_MSRating_Banesco'
-user = 'usr_safi'
-password = r'R4t3aws2o2$'
+
+
+
+server = os.getenv("SERVER_HOST")
+database = os.getenv("DATABASE_NAME")
+user = os.getenv("USER_DATABASE")
+password = os.getenv("PASSWOR_DATABASE")
 """
 server = 'ec2-18-191-95-248.us-east-2.compute.amazonaws.com'
 database = 'BERAPPRAT'
 user = 'sa'
 password = r'#MSApprating#'
-
+"""
 # Datos de ejemplo
 lista_urls = []
 tokens = {}
+
+sql_connector = SQLConnector(server, database, user, password)
+
 
 def token_required(f):
     @wraps(f)
@@ -71,13 +82,7 @@ def handle_exception(e):
 # Manejo de errores específicos
 @app.errorhandler(404)
 def handle_404_error(e):
-    response_body = {
-            'Succes':False,
-            'Message':'Pagina no encontrada',
-            'Status':404,
-            'Data':str(e)
-        }
-    return jsonify(response_body), 404
+    return jsonify({"error": "Recurso no encontrado", "mensaje": str(e)}), 404
 
 @app.errorhandler(400)
 def handle_400_error(e):
@@ -107,7 +112,9 @@ def get_links():
             'documents':data.get('documents', ''),
             'ondemand':data.get('ondemand', ''),
         }
-        inserta_encolado(body)
+        sql_connector.connect()
+        inserta_encolado(body,sql_connector)
+        sql_connector.close()
         response_body = {
             'Succes':True,
             'Message':'Datos enviados correctamente',
@@ -183,7 +190,7 @@ def document_exist():
     except Exception as e:
         return handle_exception(e)
 
-def inserta_encolado(body):
+def inserta_encolado(body,sql_connector):
     select_id_max = 'Select isnull(max(id_onbase),0) as id_onbase from TB_DOCUMENTOS_ENCOLADOS'
     consulta_max_id=sql_connector.read_data(select_id_max)
     for row in consulta_max_id:
@@ -193,10 +200,10 @@ def inserta_encolado(body):
         insert_statement_inic = "Insert into TB_DOCUMENTOS_ENCOLADOS (id_onbase, user_onbase, client_number, type_id,identification,type_person,code_country,client_name,code_industry,id_doc,periodo,on_demand,fecha_creacion,procesado) "\
             f"values({id_onbase},'{body['user']}','{data['clientnumber']}','{data['typeid']}','{data['identification']}','{data['typeperson']}','{data['codecountry']}','{data['name']}','{data['codeindustry']}',{data['iddoc']},{data['periodo']},{body['ondemand']},'{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}',0)"
         if body['ondemand']=='1':
-            #onBase.descargar_archivo(id_onbase,data['iddoc'],data['identification'],data['periodo'],'onDemand')
+            onBase.descargar_archivo(id_onbase,data['iddoc'],data['identification'],data['periodo'],'onDemand')
             print('OnDemand')
         else:
-            #onBase.descargar_archivo(id_onbase,data['iddoc'],data['identification'],data['periodo'],'batch')
+            onBase.descargar_archivo(id_onbase,data['iddoc'],data['identification'],data['periodo'],'batch')
             print('batch')
         sql_connector.insert_data(insert_statement_inic)
     return insert_statement_inic
@@ -204,9 +211,7 @@ def inserta_encolado(body):
 
 
 if __name__ == '__main__':
-    sql_connector = SQLConnector(server, database, user, password)
-    sql_connector.connect()
-    app.run(debug=True,host='0.0.0.0')
+    app.run(debug=True,ssl_context='adhoc',host='0.0.0.0')
     """
     app.run(debug=True,ssl_context='adhoc',host='0.0.0.0')
     """

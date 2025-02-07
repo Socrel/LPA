@@ -1,20 +1,19 @@
 import requests
 import base64
 import os
+from dotenv import load_dotenv
 
-GRANT_TYPE = 'client_credentials'
-VALIDITY_PERIOD ='3600'
-CONTENT_TYPE='application/x-www-form-urlencoded'
-URL_TOKEN = "https://qa-auth-ob.banesco.com.pa/oauth2/token?grant_type="+GRANT_TYPE+"&validity&validity_period="+VALIDITY_PERIOD
-URL_BASE64 ="https://qa.api.ob.banesco.com.pa/APIUtil/v1/documents/ID"
-username = "6cbk7drlvbc88vdgvgo1tg1r3o"
-password ="b9vti5n8pbn1cn2gr35vlgq8s3uq7mm1j2d79ih0u1jjb4hkd3m"
+load_dotenv()
 
-DATA = {
-    "title": "Example Title",
-    "body": "Content of a new post",
-    "userId": 1
-}
+GRANT_TYPE = os.getenv("API_GRANT_TYPE")
+VALIDITY_PERIOD = os.getenv("API_VALIDITY_PERIOD")
+CONTENT_TYPE= os.getenv("API_CONTENT_TYPE")
+URL_BASE=os.getenv("API_URL_TOKEN")
+URL_TOKEN = URL_BASE+GRANT_TYPE+"&validity&validity_period="+VALIDITY_PERIOD
+URL_BASE64 = os.getenv("API_URL_BASE64")
+username = os.getenv("API_USERNAME")
+password = os.getenv("API_PASSWORD")
+
 
 def get_token():
     headers_token = {"Content-Type": CONTENT_TYPE}
@@ -62,10 +61,8 @@ def convert_base64_to_pdf(base64_data,identificacion,periodo,id_onbase,ruta_onDe
 
     # Guarda el archivo PDF
     nombre_archivo= f'{id_onbase}_{identificacion}_{periodo}.pdf'
-    parent_directory = os.path.dirname(os.getcwd())
-    print (parent_directory)
-    ruta_guardado =os.path.join(parent_directory,'/MLPA/BALANCES/IN',ruta_onDemand,nombre_archivo)
-    print (ruta_guardado)
+    ruta_guardado =os.path.join('/home/usr_ocr_dev/MLPA/BALANCES/IN',ruta_onDemand,nombre_archivo)
+    print(ruta_guardado)
     with open(ruta_guardado, "wb") as pdf_file:
         pdf_file.write(pdf_data)
 

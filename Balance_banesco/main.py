@@ -5,19 +5,24 @@ import localragv3
 from connection_IVA_BBDD import SQLConnector
 from subprocess import Popen
 import os
+from dotenv import load_dotenv
 
-"""
-server = '10.40.192.77'
-database = 'BBDD_MSRating_Banesco'
-user = 'usr_safi'
-password = r'R4t3aws2o2$'
-"""
+dotenv_path = "/home/usr_ocr_dev/entorno_api/.env"
+# Carga las variables de entorno desde el archivo .env
+load_dotenv(dotenv_path=dotenv_path)
 
+server = os.getenv("SERVER_HOST")
+database = os.getenv("DATABASE_NAME")
+user = os.getenv("USER_DATABASE")
+password = os.getenv("PASSWOR_DATABASE")
+HORA_EJECUCION = os.getenv("HORA_EJECUCION")
+EJECUCION_ON_DEMAND = os.getenv("EJECUCION_ON_DEMAND")
+"""
 server = 'ec2-18-191-95-248.us-east-2.compute.amazonaws.com'
 database = 'BERAPPRAT'
 user = 'sa'
 password = r'#MSApprating#'
-
+"""
 def job():
     print("Empieza el proceso", flush=True)
     sql_connector = SQLConnector(server, database, user, password)
@@ -109,16 +114,18 @@ def check_on_demand():
                 print ("Hay otro proceso en ejecución")
     else:
         print("No hay procesos de prioridad alta encolados.")
+    sql_connector.commit()
     sql_connector.close()
 
-schedule.every().day.at("11:12","America/Bogota").do(job)
-schedule.every(5).seconds.do(check_on_demand)
+schedule.every().day.at(f"{HORA_EJECUCION}","America/Bogota").do(job)
+schedule.every(EJECUCION_ON_DEMAND).seconds.do(check_on_demand)
 
 def validar_crear_cliente(cliente,sql_connector):
-    validacion_statement = f"Select count(1) as contador from TB_CLIENTE where num_doc='{cliente.identification}'"
+    validacion_statement = f"Select count(1) as contador from TB_CLIENTE where num_doc='{cliente.identification}' or cod_cliente='{cliente.identification}'"
     verification = sql_connector.read_data(validacion_statement)
     for row in verification:
         if row.contador == 0:
+            print('Creando cliente')
             select_id_cliente='Select isnull(max(id_cliente),0) as id_cliente from TB_CLIENTE'
             result=sql_connector.read_data(select_id_cliente)
             for id_cl in result:
@@ -126,17 +133,22 @@ def validar_crear_cliente(cliente,sql_connector):
                         id_cliente = 1
                     else:
                         id_cliente = id_cl.id_cliente+1
+            
             select_pais = f"Select Descricpcion from TP_CATALOGOS WHERE TipoCatalogo='PAIS' and Codigo= '{cliente.code_country}'"
+            print(select_pais)
             pais_consulta = sql_connector.read_data(select_pais)
             pais_descripcion=pais_consulta[0].Descricpcion
 
             select_industria = f"Select Descricpcion from TP_CATALOGOS WHERE TipoCatalogo='TIPOINDUSTRIA' and Codigo= '{cliente.code_industry}'"
+            print(select_industria)
             industria_consulta = sql_connector.read_data(select_industria)
             industria_descripcion=industria_consulta[0].Descricpcion
             insert_cliente = f"Insert into TB_CLIENTE (id_cliente,cod_cliente,tipo_doc,num_doc,cod_act_economica,act_economica,cod_pais_residencia,pais_residencia,tip_persona,nombre,estado,fecha_creacion,total_ventas,producto_activo) "\
                                 f"values ({id_cliente},'{cliente.client_number}','{cliente.type_id}','{cliente.identification}',{cliente.code_industry},'{industria_descripcion}','{cliente.code_country}','{pais_descripcion}','{cliente.type_person}','{cliente.client_name}','A','{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}',0,0)"
             print(insert_cliente)
             sql_connector.insert_data(insert_cliente)
+        else:
+            print('Cliente existe')
 
 while True:
     now = datetime.now()

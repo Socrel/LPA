@@ -12,8 +12,9 @@ class SQLConnector:
         print(pyodbc.drivers()) 
         try:
             connection_string = (
-                f'DRIVER={{SQL Server}}; SERVER={self.server}; '
-                f'DATABASE={self.database}; UID={self.user}; PWD={self.password}; '
+                f'DRIVER={{ODBC Driver 18 for SQL Server}}; SERVER={self.server}; '
+                f'DATABASE={self.database}; UID={self.user}; PWD={self.password};'
+		f'Encrypt=yes; TrustServerCertificate=yes;'
             )
             self.connection = pyodbc.connect(connection_string)
             print("Conexión exitosa")
