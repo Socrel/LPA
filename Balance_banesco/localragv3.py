@@ -60,31 +60,45 @@ def preprocess_text(text):
     
     return text
 #solo procesa imagenes ya en blanco y negro
-def procesar_pagina_con_ocr(image, palabras_clave_regex, alto_region_superior=1000):
+def procesar_pagina_con_ocr(image, palabras_clave_situacion, palabras_clave_resultados,alto_region_superior=600):
     # Definir la región superior
     altura_pagina, ancho_pagina = image.shape
-    region_superior = image[0:alto_region_superior, 0:ancho_pagina]  # Región desde el tope hasta alto_region_superior
+    region_superior = image[0:alto_region_superior, 0:ancho_pagina] # Región desde el tope hasta alto_region_superior
+    
     # Usar EasyOCR en la región superior
     reader = easyocr.Reader(["es"], gpu=True)
     resultados_por_pagina = reader.readtext(region_superior, paragraph=False)
 
     # Combinar todo el texto detectado en una sola cadena para buscar con regex
     texto_detectado = " ".join([resultado[1].lower() for resultado in resultados_por_pagina])
+    print("El texto detectado es: ")
+    print(texto_detectado)
 
     # Normalizar texto detectado (eliminar caracteres no deseados si es necesario)
     texto_detectado = re.sub(r'[^\w\s]', '', texto_detectado)  # Elimina caracteres especiales
 
-    # Buscar cualquier coincidencia de las palabras clave usando regex
-    for regex in palabras_clave_regex:
-        # Modificar la expresión regular para permitir errores tipográficos
+    # Variables para determinar el tipo de estado financiero
+    es_situacion = False
+    es_resultados = False
+
+    # Buscar coincidencias en la lista de palabras clave para Estado de Situación Financiera
+    for regex in palabras_clave_situacion:
         regex_modificado = regex.replace("situacion", "(situacion|sltuacion)")  # Ejemplo de error tipográfico permitido
-        regex_modificado = regex_modificado.replace("resultado", "(resultado|resultados)")
-
         if re.search(regex_modificado, texto_detectado):
-            return True, region_superior  # Retorna la región de la imagen además del resultado
+            es_situacion = True
+            break  # No es necesario seguir buscando más si ya se encontró
 
-    return False, region_superior
-def procesar_cuentas_simple(response_data, categoria_identificada, diccionario_cuentas, categoria_cuenta, orden_inicial, resultados, nombre_cliente, cuit,id_cliente,periodo_archivo,moneda,sql_connector):
+    # Buscar coincidencias en la lista de palabras clave para Estado de Resultados
+    for regex in palabras_clave_resultados:
+        regex_modificado = regex.replace("resultado", "(resultado|resultados)")
+        if re.search(regex_modificado, texto_detectado):
+            es_resultados = True
+            #break  # No es necesario seguir buscando más si ya se encontró
+
+    # Retornar resultados
+    return (es_situacion or es_resultados), region_superior, es_situacion, es_resultados
+
+def procesar_cuentas_simple(response_data, categoria_identificada, diccionario_cuentas, categoria_cuenta, orden_inicial, resultados, nombre_cliente, cuit):
     orden_cuenta = orden_inicial
     
     # Dividir las líneas del resultado
@@ -96,67 +110,69 @@ def procesar_cuentas_simple(response_data, categoria_identificada, diccionario_c
         
         # Separar los campos usando el delimitador "|"
         try:
-            id_balance= consultar_balance(id_cliente,periodo_archivo,moneda,sql_connector)
-            if id_balance is not -1:
-                cuentas_previas = consultar_cuentas_previas(id_balance,sql_connector)
-                if cuentas_previas is not None:
-                    for cuenta in cuentas_previas:
-                        cuenta_reclasificada, categoria_reclasificada = cuenta
-                else:
-                    partes = linea.split("|")
-                    cuenta = partes[1].split(":")[1].strip()
-                    valor = partes[2].split(":")[1].strip()
-                    periodo = partes[3].split(":")[1].strip()
-                    
-                    # Limpiar valor y convertir a número
-                    valor = valor.replace(",", "").replace("-", "")
-                    
-                    # Reclasificación
-                    cuenta_reclasificada, categoria_reclasificada = obtener_reclasificacion(cuenta, categoria_cuenta, diccionario_cuentas)
-                estado = 0
-                diferencia_periodos = 'pendiente'
-                tipo_periodo = 'pendiente'
-                
-                # Añadir la cuenta al resultado
-                resultados.append((
-                    nombre_cliente,
-                    cuit,
-                    categoria_cuenta,
-                    orden_cuenta,
-                    cuenta,
-                    cuenta_reclasificada,
-                    categoria_reclasificada,
-                    valor,
-                    periodo,
-                    tipo_periodo,
-                    diferencia_periodos,
-                    estado
-                ))
-                orden_cuenta += 1
+            partes = linea.split("|")
+            cuenta = partes[1].split(":")[1].strip()
+            valor = partes[2].split(":")[1].strip()
+            periodo = partes[3].split(":")[1].strip()
+            
+            # Si la cuenta contiene "Total" (sin importar mayúsculas/minúsculas/espacios)
+            if re.search(r'\btotal\b', cuenta, re.IGNORECASE):
+                cuenta_reclasificada = "No Aplica"
+                categoria_reclasificada = "Sin Categoría"
             else:
-                print(f"Cliente con id: {id_cliente}, tiene más de un balance para la misma fecha")
-                continue
+                # Reclasificación normal
+                cuenta_reclasificada, categoria_reclasificada = obtener_reclasificacion(cuenta, categoria_cuenta, diccionario_cuentas)
+
+            # Limpiar valor y convertir a número
+            valor = valor.replace(",", "").replace("-", "")
+            estado = 0
+            diferencia_periodos = 'pendiente'
+            tipo_periodo = 'pendiente'
+            
+            # Añadir la cuenta al resultado
+            resultados.append((
+                nombre_cliente,
+                cuit,
+                categoria_cuenta,
+                orden_cuenta,
+                cuenta,
+                cuenta_reclasificada,
+                categoria_reclasificada,
+                valor,
+                periodo,
+                tipo_periodo,
+                diferencia_periodos,
+                estado
+            ))
+            orden_cuenta += 1
         except (IndexError, ValueError):
             print(f"Línea mal formateada: {linea}")
             continue  # Salta líneas con formato incorrecto
     
     return resultados, orden_cuenta
 
-palabras_clave_regex = [
-    r"estado de situación financiera",
-    r"estado de situacion",
-    r"estado de situacion patrimonial",
-    r"estado consolidado de situación financiera",
-    r"estado consolidado de resultados y otras utilidades integrales",
-    r"estado de situacion financiera",
-    r"estado de resultados",
-    r"estado de resultados integrales",
-    r"estado de resultado",
-    r"Balance Sheet",
-    r"balance shcet ",
-    r"pasivos corrientes", 
-    r"estado de situacion"
-]
+palabras_situacion_financiera = [
+                      r"estado de situación financiera",
+                      r"estado de situacion patrimonial",
+                      r"estado consolidado de situación financiera",
+                      r"balance Sheet",
+                      r"pasivos corrientes", 
+                      r"estado de situacion",
+                      r"estado de situación",
+                      r"estado consolidado de situacion financiera",
+                     ]
+palabras_resultados = [ 
+                        r"estado de resultados",
+                        r"estado de resultados integrales",
+                        r"estado de resultado",
+                        r"Estado consol¡dado de resultados",
+                        r"estado de ganancias y perdidas",
+                        r"ingresos y gastos",
+                        r"estado consolidado de resultados y otras utilidades integrales",
+                        r"Estado de Utilidades",
+                        r"Estado de Utilidad"
+                        r"estado de perdidas y ganancias",
+                        ]
 
 diccionario_cuentas_activos_corrientes =[]
 diccionario_cuentas_activos_no_corrientes =[]
@@ -175,6 +191,27 @@ diccionario_var_patrimonio={}
 diccionario_var_estado_resultados={}
 diccionario_resultantes={}
 
+def guardar_texto_reconstruido(nombre_doc, chunks, tipo_documento, ubicacion_actual):
+    carpeta_texto_reconstruido = os.path.join(ubicacion_actual, 'src', 'pdfs', 'text_reconstruido')
+    if not os.path.exists(carpeta_texto_reconstruido):
+        os.makedirs(carpeta_texto_reconstruido)
+    
+    ruta_texto_reconstruido = os.path.join(carpeta_texto_reconstruido, f'{nombre_doc}_{tipo_documento}.txt')
+    with open(ruta_texto_reconstruido, "w", encoding="utf-8") as file:
+        for chunk in chunks:
+            file.write(chunk.strip() + "\n")
+    print(f"Texto reconstruido guardado en: {ruta_texto_reconstruido}")
+    return ruta_texto_reconstruido
+
+def generar_embeddings(contenido, tipo):
+    if contenido:
+        print(NEON_GREEN + f"Generating embeddings for {tipo} content..." + RESET_COLOR)
+        embeddings = []
+        for content in contenido:
+            response = ollama.embeddings(model='mxbai-embed-large', prompt=content)
+            embeddings.append(response["embedding"])
+        return torch.tensor(embeddings)  # Convertir a tensor
+    return None
 
 # Function to get relevant context from the vault based on user input
 def get_relevant_context(rewritten_input, vault_embeddings, vault_content, top_k=8):
@@ -291,9 +328,9 @@ def obtener_reclasificacion(cuenta, categoria, diccionario_cuentas, umbral_simil
             ##
             ##
             ##
-            print (f'cuenta :{cuenta}')
-            print (f'cuenta_diccionario :{cuenta_diccionario}')
-            print (f'similitud_cuenta :{similitud_cuenta}')
+            #print (f'cuenta :{cuenta}')
+            #print (f'cuenta_diccionario :{cuenta_diccionario}')
+            #print (f'similitud_cuenta :{similitud_cuenta}')
             #print (f'similitud_alterna :{similitud_alterna}')
         # Verifica si ambas similitudes superan el umbral
             if similitud_cuenta >= umbral_similitud:
@@ -497,7 +534,9 @@ def procesar_llm(id_lote,id_doc,cuit,pdf_path,pdf_path_out,nombre_doc,ubicacion_
     
     ruta_texto_reconstruido = None
     paginas_encontradas =''
+    retorno=False
     if os.path.exists(pdf_path):
+        retorno = True
         if (nombre_doc =='ejemplo extraction cuentas'):
             cuit=30708622555
             nombre_cliente='Pueba'
@@ -514,6 +553,8 @@ def procesar_llm(id_lote,id_doc,cuit,pdf_path,pdf_path_out,nombre_doc,ubicacion_
         contador_paginas = 0
         limite_paginas = 4  # Limitar a revisar solo las 5 páginas siguientes
         palabra_clave_encontrada = False  # Nueva variable para rastrear si se encontró alguna palabra clave
+        ruta_estado_resultados = ""
+        ruta_situacion_financiera = "" 
         for i, page in enumerate(pages):
             # Si ya revisamos las 5 páginas después de encontrar la palabra clave, continuar con el siguiente documento,
             # pero solo si ya hemos encontrado al menos una palabra clave, de lo contrario recorre todo el documento
@@ -531,12 +572,13 @@ def procesar_llm(id_lote,id_doc,cuit,pdf_path,pdf_path_out,nombre_doc,ubicacion_
             gray_img   = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
             # Llamar a la función que realiza OCR selectivo en la parte superior
-            palabra_encontrada,region_superior = procesar_pagina_con_ocr(gray_img, palabras_clave_regex, alto_region_superior=600)
+            es_valida, region, es_situacion, es_resultados = procesar_pagina_con_ocr(gray_img, palabras_situacion_financiera,palabras_resultados)
+
             # Mostrar la imagen de la región superior para verificar visualmente
             #plt.imshow(cv2.cvtColor(region_superior, cv2.COLOR_BGR2RGB))
             #plt.title(f"Región superior de la página {i + 1}")
             #plt.show()
-            if palabra_encontrada:
+            if es_valida:
                 print(NEON_GREEN+f"Palabra clave encontrada en la página {i + 1}. Procesando contenido."+ RESET_COLOR)
                 
                 # Marcar que se ha encontrado al menos una palabra clave
@@ -609,18 +651,13 @@ def procesar_llm(id_lote,id_doc,cuit,pdf_path,pdf_path_out,nombre_doc,ubicacion_
                         current_chunk = sentence + " "
                 if current_chunk:  # Don't forget the last chunk!
                     chunks.append(current_chunk)
-                # Guarda el texto reconstruido en una carpeta específica
-                carpeta_texto_reconstruido = os.path.join(ubicacion_actual, 'src', 'pdfs','text_reconstruido')
-                if not os.path.exists(carpeta_texto_reconstruido):
-                        os.makedirs(carpeta_texto_reconstruido)
 
-                ruta_texto_reconstruido = os.path.join(carpeta_texto_reconstruido, f'{nombre_doc}_reconstruido.txt')
-                with open(ruta_texto_reconstruido, "w", encoding="utf-8") as file:
-                        for chunk in chunks:
-                            file.write(chunk.strip() + "\n")
-                        # file.write("\n"+texto_reconstruido+"\n")
-
-                print(f"Texto reconstruido guardado en: {ruta_texto_reconstruido}")
+                if es_situacion:
+                    ruta_situacion_financiera = ""    
+                    ruta_situacion_financiera = guardar_texto_reconstruido(nombre_doc, chunks, "situacion", ubicacion_actual)
+                if es_resultados:
+                    ruta_estado_resultados = ""
+                    ruta_estado_resultados = guardar_texto_reconstruido(nombre_doc, chunks, "resultados", ubicacion_actual)
             else:
                 print(YELLOW+f"La página {i + 1} no contiene información relevante."+ RESET_COLOR)  
                 if palabra_clave_encontrada:
@@ -628,33 +665,29 @@ def procesar_llm(id_lote,id_doc,cuit,pdf_path,pdf_path_out,nombre_doc,ubicacion_
             # Eliminar la imagen temporal
             if os.path.exists(temp_image_path):
                 os.remove(temp_image_path)
+        vault_content_situacion = []
+        vault_content_resultados = []
+            # Cargar contenido en listas separadas si los archivos existen
+
+        if os.path.exists(ruta_situacion_financiera):
+            with open(ruta_situacion_financiera, "r", encoding='utf-8') as file:
+                vault_content_situacion = file.readlines()
+     
+        print(YELLOW+f"procesando {ruta_situacion_financiera} ..........."+ RESET_COLOR)  
+        print(YELLOW+f"embbeddings {vault_content_situacion} ..........."+ RESET_COLOR)  
         
-        #with open(ruta_texto_reconstruido, 'r', encoding='utf-8') as file:
-        #        text = file.read()
+        if os.path.exists(ruta_estado_resultados):
+            with open(ruta_estado_resultados, "r", encoding='utf-8') as file:
+                vault_content_resultados = file.readlines()
+                print(YELLOW+f"Se leyo {ruta_estado_resultados} ..........."+ RESET_COLOR)  
 
-        # Load the vault content
-        print(NEON_GREEN + "Loading vault content..." + RESET_COLOR)
-        vault_content = []
-        if os.path.exists(ruta_texto_reconstruido):
-            with open(ruta_texto_reconstruido, "r", encoding='utf-8') as vault_file:
-                vault_content = vault_file.readlines()
         # Generate embeddings for the vault content using Ollama
-        if vault_content:
-            print(NEON_GREEN + "Generating embeddings content..." + RESET_COLOR)
-            vault_embeddings = []
-            for content in vault_content:
-                response = ollama.embeddings(model='mxbai-embed-large', prompt=content)
-                vault_embeddings.append(response["embedding"])
 
-            # Convert to tensor and print embeddings
-            print("Converting embeddings to tensor...")
-            vault_embeddings_tensor = torch.tensor(vault_embeddings) 
-            print("Embeddings for each line in the vault:")
-            print(vault_embeddings_tensor)
-
-            conversation_history = []
-            
-            system_message = [
+        # Generar embeddings separados
+        vault_embeddings_situacion = generar_embeddings(vault_content_situacion, "situación financiera") if vault_content_situacion else None
+        vault_embeddings_resultados = generar_embeddings(vault_content_resultados, "estado de resultados") if vault_content_resultados else None
+        
+        system_message = [
         "You are a financial assistant specialized in extracting financial accounts from statements.",
         "Your task is to extract **all** relevant accounts and organize them using a STRICT structured format without additional text, comments, or explanations.",
         "Respond in Spanish, using the following format for each account: 'Categoría: <categoría>' | Cuenta: <nombre> | Valor: <valor numérico sin separadores de miles> | Fecha: <fecha en formato yyyy-mm-dd>'.",
@@ -663,10 +696,10 @@ def procesar_llm(id_lote,id_doc,cuit,pdf_path,pdf_path_out,nombre_doc,ubicacion_
         "Exclude aggregated accounts such as 'Total Activo Corriente' or 'Total Activo No Corriente'.",
         "If no valid accounts can be identified, respond with 'SIN CUENTAS'.",
         "Ensure the result strictly adheres to the format and instructions provided."
-    ]
+        ]
 
 
-            lpa_input = """
+        lpa_input = """
             Respond only based on the information extracted in Relevant Context. Respond in a structured format and WITHOUT ADDITIONAL TEXT.
 
             The expected output is a text containing only the accounts of "Activo Corriente" that have a value associated for the latest period, ensuring that the sum of these accounts matches the "Total Activo Corriente." Exclude any accounts with a value of 0 for the latest period.
@@ -695,7 +728,7 @@ def procesar_llm(id_lote,id_doc,cuit,pdf_path,pdf_path_out,nombre_doc,ubicacion_
             - If the "Total Activo" cannot be matched due to missing or inconsistent values, return an empty array as the value of "activo."
             """
 
-            lpa_input_activo_no_corriente = """
+        lpa_input_activo_no_corriente = """
             Respond only based on the information extracted in Relevant Context. Respond in a structured format and WITHOUT ADDITIONAL TEXT.
 
             The expected output is a text containing only the accounts of "Activo No Corriente" that have a value associated for the latest period, ensuring that the sum of these accounts matches the "Total Activo No Corriente." Exclude any accounts with a value of 0 for the latest period.
@@ -725,7 +758,7 @@ def procesar_llm(id_lote,id_doc,cuit,pdf_path,pdf_path_out,nombre_doc,ubicacion_
             - If the "Total Activo No Corriente" cannot be matched due to missing or inconsistent values, return an empty array as the value of "activo_no_corriente."
             """
 
-            lpa_input_pasivo_corriente = """
+        lpa_input_pasivo_corriente = """
             Respond only based on the information extracted in Relevant Context. Respond in a structured format and WITHOUT ADDITIONAL TEXT.
 
             The expected output is text containing only the accounts of "Pasivo Corriente" (also known as "Pasivo Circulante") that have a value associated for the latest period, ensuring that the sum of these accounts matches the "Total Pasivo Corriente." Exclude any accounts with a value of 0 for the latest period.
@@ -753,7 +786,7 @@ def procesar_llm(id_lote,id_doc,cuit,pdf_path,pdf_path_out,nombre_doc,ubicacion_
             - If the "Total Pasivo Corriente" cannot be matched due to missing or inconsistent values, return an empty array as the value of "pasivo_corriente."
             """
 
-            lpa_input_pasivo_no_corriente = """
+        lpa_input_pasivo_no_corriente = """
             Respond only based on the information extracted in Relevant Context. Respond in a structured format and WITHOUT ADDITIONAL TEXT.
 
             The expected output is text containing only the accounts of "Pasivo No Corriente" (also known as "Pasivo No Circulante" or "Otros Pasivos") that have a value associated for the latest period, ensuring that the sum of these accounts matches the "Total Pasivo No Corriente." Exclude any accounts with a value of 0 for the latest period.
@@ -781,10 +814,10 @@ def procesar_llm(id_lote,id_doc,cuit,pdf_path,pdf_path_out,nombre_doc,ubicacion_
             8. If the "Total Pasivo No Corriente" cannot be matched due to missing or inconsistent values, return an empty array as the value of "pasivo_no_corriente."
             """
 
-            lpa_input_patrimonio = """
+        lpa_input_patrimonio = """
             Respond only based on the information extracted in Relevant Context. Respond in a structured format and WITHOUT ADDITIONAL TEXT.
 
-            The expected output is text containing only the accounts of "Patrimonio" (including "Patrimonio No Controladora" and other names associated with this category) that have a value associated for the latest period, ensuring that the sum of these accounts matches the "Total Patrimonio." Exclude any accounts with a value of 0 for the latest period.  
+            The expected output is text containing only the accounts of "Patrimonio" (including "Patrimonio No Controladora" and other names associated with this category) that appear explicitly in the "Estado de Situación Financiera" that have a value associated for the latest period, ensuring that the sum of these accounts matches the "Total Patrimonio." Exclude any accounts with a value of 0 for the latest period.  
             ***Do not include aggregated accounts such as "Total Patrimonio," "Total de patrimonio atribuible a los propietarios", or similar totals.***
 
             Respond only based on the information extracted in the Relevant Context using the following STRICT format:
@@ -808,11 +841,10 @@ def procesar_llm(id_lote,id_doc,cuit,pdf_path,pdf_path_out,nombre_doc,ubicacion_
             5. Skip any accounts without a numeric value or where the value for the latest period is missing or zero.
             6. The output must only include accounts under the "Patrimonio" category.
             7. If you cannot identify valid accounts, respond with "SIN CUENTAS."
-            Special Rules:
-            - If the "Total Patrimonio" cannot be matched due to missing or inconsistent values, return an empty array as the value of "patrimonio."
+
             """
 
-            lpa_input_ingresos = """
+        lpa_input_ingresos = """
             Respond only based on the information extracted in Relevant Context. Respond in a structured format and WITHOUT ADDITIONAL TEXT.
 
             The expected output is text containing only the accounts of "Ingresos" that appear explicitly in the "Estado de Resultados" or similars and have a value associated for the latest period.  
@@ -841,7 +873,7 @@ def procesar_llm(id_lote,id_doc,cuit,pdf_path,pdf_path_out,nombre_doc,ubicacion_
             7. If you cannot identify valid accounts, respond with "SIN CUENTAS."
 
             """
-            lpa_input_gastos = """
+        lpa_input_gastos = """
             Respond only based on the information extracted in Relevant Context. Respond in a structured format and WITHOUT ADDITIONAL TEXT.
 
             The expected output is text containing only the accounts of "Gastos" that appear explicitly in the "Estado de Resultados" or similars and have a value associated for the latest period.  
@@ -870,10 +902,62 @@ def procesar_llm(id_lote,id_doc,cuit,pdf_path,pdf_path_out,nombre_doc,ubicacion_
             7. If you cannot identify valid accounts, respond with "SIN CUENTAS."
 
             """
+        resultados_acumulados_ER = []
+        resultados_acumulados = []
+        # Mostrar los embeddings generados
+        if vault_embeddings_resultados is not None:
+            print("Embeddings for 'estado de resultados':")
+            print(vault_embeddings_resultados)
             try:
                 conversation_history = []
+                #Ingresos Estado de Resultados
+                response_data_cuentas_ingresos = ollama_chat(lpa_input_ingresos, system_message, vault_embeddings_resultados, vault_content_resultados, args.model, conversation_history)
+                print(NEON_GREEN + "response_data_cuentas_ingresos: \n\n" + response_data_cuentas_ingresos + RESET_COLOR)
+
+                response_data_cuentas_ingresos_corrected = (response_data_cuentas_ingresos)
+
+                data_ingresos = (response_data_cuentas_ingresos)
+
+                conversation_history = []
+
+                #Gastos Estado de Resultados
+                response_data_cuentas_gastos = ollama_chat(lpa_input_gastos, system_message, vault_embeddings_resultados, vault_content_resultados, args.model, conversation_history)
+                print(NEON_GREEN + "response_data_cuentas_gastos: \n\n" + response_data_cuentas_gastos + RESET_COLOR)
+
+                response_data_cuentas_gastos_corrected = (response_data_cuentas_gastos)
+
+                data_gastos = (response_data_cuentas_gastos)
+                conversation_history = []
+
+                orden_cuenta_resultados=1
+
+                #Ingresos Estado de resultados
+                resultados_acumulados_ER, orden_cuenta_resultados = procesar_cuentas_simple(
+                data_ingresos, 'Ingresos', diccionario_cuentas_estado_resultados, 'estado resultados', orden_cuenta_resultados,resultados_acumulados_ER,nombre_cliente,cuit
+                )
+
+                #Gastos Estado de resultados
+                resultados_acumulados_ER, orden_cuenta_resultados   = procesar_cuentas_simple(
+                data_gastos, 'Gastos', diccionario_cuentas_estado_resultados, 'estado resultados', orden_cuenta_resultados,resultados_acumulados_ER,nombre_cliente,cuit
+                )
+                df_financiero = pd.DataFrame(resultados_acumulados_ER, columns=['cliente','cuit','categoria','orden_cuenta', 'cuenta', 'cuenta_reclasificada','categoria_reclasificada', 'valor', 'periodo','tipo_periodo','diferencia_periodos','estado'])
+                print(df_financiero)     
+                print(f"-------------------")
+            except ValueError as e:
+                print(f"Error: {e}")
+
+        if vault_embeddings_situacion is not None:
+            print("Embeddings for 'estado de situación financiera':")
+            print(vault_embeddings_situacion)
+
+            conversation_history = []
+            
+            
+            try:
+                
+                conversation_history = []
                 #activos corrientes
-                response_data_cuentas_activo_corriente = ollama_chat(lpa_input, system_message, vault_embeddings_tensor, vault_content, args.model, conversation_history)
+                response_data_cuentas_activo_corriente = ollama_chat(lpa_input, system_message, vault_embeddings_situacion, vault_content_situacion, args.model, conversation_history)
                 
                 #print(NEON_GREEN + "response_data_cuentas activos corrientes: \n\n" + response_data_cuentas_activo_corriente + RESET_COLOR)
                       
@@ -885,7 +969,7 @@ def procesar_llm(id_lote,id_doc,cuit,pdf_path,pdf_path_out,nombre_doc,ubicacion_
 
 
                 #activos no corrientes
-                response_data_cuentas_activo_no_corriente = ollama_chat(lpa_input_activo_no_corriente, system_message, vault_embeddings_tensor, vault_content, args.model, conversation_history)
+                response_data_cuentas_activo_no_corriente = ollama_chat(lpa_input_activo_no_corriente, system_message, vault_embeddings_situacion, vault_content_situacion, args.model, conversation_history)
 
                 data_activo_no_corriente = (response_data_cuentas_activo_no_corriente)
                 
@@ -894,7 +978,7 @@ def procesar_llm(id_lote,id_doc,cuit,pdf_path,pdf_path_out,nombre_doc,ubicacion_
                 conversation_history = []
 
                 #pasivos corrientes
-                response_data_cuentas_pasivo_corriente = ollama_chat(lpa_input_pasivo_corriente, system_message, vault_embeddings_tensor, vault_content, args.model, conversation_history)
+                response_data_cuentas_pasivo_corriente = ollama_chat(lpa_input_pasivo_corriente, system_message, vault_embeddings_situacion, vault_content_situacion, args.model, conversation_history)
                
                 data_pasivo_corriente = (response_data_cuentas_pasivo_corriente)
                 
@@ -903,7 +987,7 @@ def procesar_llm(id_lote,id_doc,cuit,pdf_path,pdf_path_out,nombre_doc,ubicacion_
                 conversation_history = []
                 
                 #pasivos no corrientes
-                response_data_cuentas_pasivo_no_corriente = ollama_chat(lpa_input_pasivo_no_corriente, system_message, vault_embeddings_tensor, vault_content, args.model, conversation_history)   
+                response_data_cuentas_pasivo_no_corriente = ollama_chat(lpa_input_pasivo_no_corriente, system_message, vault_embeddings_situacion, vault_content_situacion, args.model, conversation_history)   
 
                 data_pasivo_no_corriente = (response_data_cuentas_pasivo_no_corriente)
 
@@ -912,54 +996,27 @@ def procesar_llm(id_lote,id_doc,cuit,pdf_path,pdf_path_out,nombre_doc,ubicacion_
                 conversation_history = []
                 
                 #patrimonio
-                response_data_cuentas_patrimonio = ollama_chat(lpa_input_patrimonio, system_message, vault_embeddings_tensor, vault_content, args.model, conversation_history)
+                response_data_cuentas_patrimonio = ollama_chat(lpa_input_patrimonio, system_message, vault_embeddings_situacion, vault_content_situacion, args.model, conversation_history)
                 
                 data_patrimonio = (response_data_cuentas_patrimonio)
                 print(NEON_GREEN + "response_data_cuentas_patrimonio: \n\n" + response_data_cuentas_patrimonio + RESET_COLOR)
 
                 conversation_history = []
-            
-                #Ingresos Estado de Resultados
-                response_data_cuentas_ingresos = ollama_chat(lpa_input_ingresos, system_message, vault_embeddings_tensor, vault_content, args.model, conversation_history)
-                print(NEON_GREEN + "response_data_cuentas_ingresos: \n\n" + response_data_cuentas_ingresos + RESET_COLOR)
 
-                response_data_cuentas_ingresos_corrected = (response_data_cuentas_ingresos)
-
-                data_ingresos = (response_data_cuentas_ingresos)
-
-                conversation_history = []
-
-                #Gastos Estado de Resultados
-                response_data_cuentas_gastos = ollama_chat(lpa_input_gastos, system_message, vault_embeddings_tensor, vault_content, args.model, conversation_history)
-                print(NEON_GREEN + "response_data_cuentas_gastos: \n\n" + response_data_cuentas_gastos + RESET_COLOR)
-
-                response_data_cuentas_gastos_corrected = (response_data_cuentas_gastos)
-
-                data_gastos = (response_data_cuentas_gastos)
-
-                conversation_history = []
 
             except ValueError as e:
                 print(f"Error: {e}")
 
 
-            # Carga el string JSON como un objeto Python (en este caso, una lista de diccionarios)
-            #data = json.loads(response)
-            #print(response_data_cuentas_activo_no_corriente)
-                #estado cero porque no se ha procesado en la aplicacion
             estado=0
             cuenta_reclasificada='' 
             resultados_acumulados = []
-            resultados_acumulados_ER = []
 
-            selected_columns_results = []
             orden_cuenta_global=1
-
-            moneda='USD'
 
             #activos corrientes identificados
             resultados_acumulados, orden_cuenta_global = procesar_cuentas_simple(
-            data_activo_corriente, 'activo_corriente', diccionario_cuentas_activos_corrientes, 'Activo Corriente', orden_cuenta_global,resultados_acumulados,nombre_cliente,cuit,id_cliente,periodo_archivo,moneda,sql_connector
+            data_activo_corriente, 'activo_corriente', diccionario_cuentas_activos_corrientes, 'Activo Corriente', orden_cuenta_global,resultados_acumulados,nombre_cliente,cuit
             )
 
             
@@ -983,39 +1040,28 @@ def procesar_llm(id_lote,id_doc,cuit,pdf_path,pdf_path_out,nombre_doc,ubicacion_
             data_patrimonio, 'patrimonio', diccionario_cuentas_patrimonio, 'Patrimonio', orden_cuenta_global,resultados_acumulados,nombre_cliente,cuit
             )
 
-            #Ingresos Estado de resultados
-            resultados_acumulados_ER, orden_cuenta_global = procesar_cuentas_simple(
-            data_ingresos, 'Ingresos', diccionario_cuentas_estado_resultados, 'estado resultados', orden_cuenta_global,resultados_acumulados_ER,nombre_cliente,cuit
-            )
-
-            #Gastos Estado de resultados
-            resultados_acumulados_ER, orden_cuenta_global = procesar_cuentas_simple(
-            data_gastos, 'Gastos', diccionario_cuentas_estado_resultados, 'estado resultados', orden_cuenta_global,resultados_acumulados_ER,nombre_cliente,cuit
-            )
-
             df_balances = pd.DataFrame(resultados_acumulados, columns=['cliente','cuit','categoria','orden_cuenta', 'cuenta', 'cuenta_reclasificada','categoria_reclasificada', 'valor', 'periodo','tipo_periodo','diferencia_periodos','estado'])
-            df_financiero = pd.DataFrame(selected_columns_results, columns=['cliente','cuit','categoria','orden_cuenta','cuenta','valor', 'periodo','estado'])
             pd.set_option('display.max_rows', None)
             pd.set_option('display.max_columns', None)
             pd.set_option('display.width', None)
 
-            #print(df_balances)
             print(df_balances.loc[:, ['orden_cuenta','categoria', 'cuenta', 'valor', 'periodo']])
-            print(df_financiero)     
             print(f"-------------------")
+            
+
+           
+        
+        if (vault_embeddings_resultados is not None or vault_embeddings_situacion is not None):
             
             df_balances['mm'] = pd.to_datetime(df_balances['periodo']).dt.month
             diferencia_meses = df_balances['mm'].iloc[0]
             periodo_archivo = df_balances['periodo'].iloc[0]
             print(diferencia_meses)
-            
-            
-
             #obtiene el maximo id balance temporal
             id_balance_max=get_maximo_id_balance_temp(sql_connector)
             #Creacion de id_balance
-            #####(Falta ajustar cuando hayan multiples periodos)
-            insert_inicial(id_balance_max,id_cliente,nombre_cliente,periodo_archivo,id_lote,id_doc,cuit,nombre_doc,paginas_encontradas,sql_connector,moneda)
+            #####(Falta ajustar cuando hayan multiples periodos)            
+            insert_inicial(id_balance_max,id_cliente,nombre_cliente,periodo_archivo,id_lote,id_doc,cuit,nombre_doc,paginas_encontradas,sql_connector)
             print(df_balances)
             insertar_informacion(df_balances,df_financiero,id_balance_max,id_doc,sql_connector)
         else:
@@ -1025,6 +1071,7 @@ def procesar_llm(id_lote,id_doc,cuit,pdf_path,pdf_path_out,nombre_doc,ubicacion_
         os.replace(pdf_path, pdf_path_out)
     else:
         print('No existe archivo')
+    return retorno
 
 
 def insertar_informacion(df_balances,df_financiero,id_balance_max,id_doc,sql_connector):
@@ -1041,7 +1088,7 @@ def insertar_informacion(df_balances,df_financiero,id_balance_max,id_doc,sql_con
     for index, row in df_balances.iterrows():
         categoria = str(row['categoria_reclasificada']).lower()
 
-        if categoria in categoria_a_diccionario:
+        if categoria in categoria_a_diccionario or (categoria == "Sin Categoría"):
             procesar_fila(row, index, id_doc, id_balance_max, categoria_a_diccionario, diccionario_resultantes,categoria,sql_connector)
         else:
 
@@ -1062,9 +1109,12 @@ def procesar_fila(row, index, id_doc, id_balance_max, categoria_diccionario, dic
     valor = row['valor'] if row['valor'] != '' else 0
     cuenta_reclasificada = str(row['cuenta_reclasificada']) if str(row['cuenta_reclasificada']) != '' else 'None'
 
-    # Determinar diccionario a usar
-    diccionario = categoria_diccionario.get(categoria, {})
-    variable = diccionario.get(cuenta_reclasificada, diccionario_resultantes.get(cuenta_reclasificada, None))
+    if categoria == "Sin Categoría":
+        variable = "var999"
+    else:
+        # Determinar diccionario a usar
+        diccionario = categoria_diccionario.get(categoria, {})
+        variable = diccionario.get(cuenta_reclasificada, diccionario_resultantes.get(cuenta_reclasificada, None))
 
     if variable:
         # Insertar en TL_LPA_CUENTAS
@@ -1161,11 +1211,11 @@ def get_maximo_id_balance_temp(sql_connector):
         id_balance_2 = row_c.id_balance_temp +1
 
     return max(id_balance, id_balance_2)
-def insert_inicial(id_balance_max,id_cliente,nombre_cliente,periodo_archivo,id_lote,id_doc,cuit,nombre_doc,paginas_encontradas,sql_connector,moneda):
+def insert_inicial(id_balance_max,id_cliente,nombre_cliente,periodo_archivo,id_lote,id_doc,cuit,nombre_doc,paginas_encontradas,sql_connector):
     
     INSERT_TB_LPA_BALANCE="Insert into TB_LPA_BALANCE (id_balance,num_calificacion,id_cliente,nombre_cliente,id_rating,id_modelo_bal,estatus,moneda,unidad_monetaria,tasa_cambio,mes,estado_mes,estado,usuario_creacion,fecha_creacion,fecha_asignacion,norma_contable,auditor) "\
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    params =(id_balance_max,'1',id_cliente,nombre_cliente,id_balance_max,1,'Auditado',moneda,'Absolutas',1,'12','Individual','A','LPA',datetime.now().strftime('%Y-%m-%d %H:%M:%S'),periodo_archivo,'IFRS','NA')
+    params =(id_balance_max,'1',id_cliente,nombre_cliente,id_balance_max,1,'Auditado','USD','Absolutas',1,'12','Individual','A','LPA',datetime.now().strftime('%Y-%m-%d %H:%M:%S'),periodo_archivo,'IFRS','NA')
     sql_connector.insert_data(INSERT_TB_LPA_BALANCE, params)
 
     INSERT_TL_LPA_CREACION = "Insert into TL_LPA_CREACION (id_ejecucion,id_documento,id_periodo,id_balance_temp,fecha_asignacion,estado) "\
@@ -1189,12 +1239,12 @@ def insert_error(id_lote,id_doc,cuit,nombre_doc,sql_connector):
 
 def cargar_diccionarios(sql_connector):
     #Consulta diccionario de cuentas
-    select_statement_activos_corrientes = "Select cuenta,categoria,cuenta_reclasificada,categoria_reclasificada from TB_DICCIONARIO_CUENTAS where categoria ='Activo corriente' and tipo='Cuenta';"
-    select_statement_activos_no_corrientes = "Select cuenta,categoria,cuenta_reclasificada,categoria_reclasificada from TB_DICCIONARIO_CUENTAS where categoria ='Activo No corriente' and tipo='Cuenta';"
-    select_statement_pasivos_corrientes = "Select cuenta,categoria,cuenta_reclasificada,categoria_reclasificada from TB_DICCIONARIO_CUENTAS where categoria ='Pasivo Corriente' and tipo='Cuenta';"
-    select_statement_pasivos_no_corrientes = "Select cuenta,categoria,cuenta_reclasificada,categoria_reclasificada from TB_DICCIONARIO_CUENTAS where categoria ='Pasivo No corriente' and tipo='Cuenta';"
-    select_statement_patrimonio = "Select cuenta,categoria,cuenta_reclasificada,categoria_reclasificada from TB_DICCIONARIO_CUENTAS where categoria ='Patrimonio' and tipo='Cuenta';"
-    select_statement_estado_resultados = "Select cuenta,categoria,cuenta_reclasificada,categoria_reclasificada from TB_DICCIONARIO_CUENTAS where categoria ='Estado Resultados' and tipo='Cuenta';"
+    select_statement_activos_corrientes = "Select cuenta,categoria,cuenta_reclasificada,categoria_reclasificada from TB_DICCIONARIO_CUENTAS where categoria ='Activo corriente';"
+    select_statement_activos_no_corrientes = "Select cuenta,categoria,cuenta_reclasificada,categoria_reclasificada from TB_DICCIONARIO_CUENTAS where categoria ='Activo No corriente';"
+    select_statement_pasivos_corrientes = "Select cuenta,categoria,cuenta_reclasificada,categoria_reclasificada from TB_DICCIONARIO_CUENTAS where categoria ='Pasivo Corriente';"
+    select_statement_pasivos_no_corrientes = "Select cuenta,categoria,cuenta_reclasificada,categoria_reclasificada from TB_DICCIONARIO_CUENTAS where categoria ='Pasivo No corriente';"
+    select_statement_patrimonio = "Select cuenta,categoria,cuenta_reclasificada,categoria_reclasificada from TB_DICCIONARIO_CUENTAS where categoria ='Patrimonio';"
+    select_statement_estado_resultados = "Select cuenta,categoria,cuenta_reclasificada,categoria_reclasificada from TB_DICCIONARIO_CUENTAS where categoria ='Estado Resultados';"
     result_activos_corrientes = sql_connector.read_data(select_statement_activos_corrientes)
     result_activos_no_corrientes = sql_connector.read_data(select_statement_activos_no_corrientes)
     result_pasivos_corrientes = sql_connector.read_data(select_statement_pasivos_corrientes)
@@ -1263,24 +1313,3 @@ def obtener_carpeta_petersen(ubicacion_actual):
     carpeta_pdf = os.path.join(disco, '\MLPA\BALANCE\desarrollo')
 
     return carpeta_pdf
-
-def consultar_balance(id_cliente,fecha_asignacion,moneda,sql_connector):
-    SELET_STATEMENT = f"select id_balance from tb_balance where id_cliente={id_cliente} and fecha_asignacion ={fecha_asignacion} and moneda='{moneda}'"
-    consulta= sql_connector.read_data(SELET_STATEMENT)
-    id_balance=-1
-    if len(consulta) < 2:
-        for row in consulta:
-            id_balance= row.id_balance
-    return id_balance
-def consultar_cuentas_previas(id_balance,sql_connector):
-    cuentas=None
-    SELET_STATEMENT = f"select max(id_documento) from tl_lpa_creacion where id_balance={id_balance}"
-    consulta= sql_connector.read_data(SELET_STATEMENT)
-    for row in consulta:
-        id_documento= row.id_documento
-
-    SELECT_CUENTAS=f"Select categoria_clasificada, cuenta_final from tl_lpa_cuentas where id_documento={id_documento}"
-    consulta_cuentas= sql_connector.read_data(SELECT_CUENTAS)
-    for cuenta in consulta_cuentas:
-        cuentas.append(cuenta)
-    return cuentas
